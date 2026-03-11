@@ -152,13 +152,15 @@ CYCLE_TIME_JSON=""
 if [[ "$FETCH_ONLY" == false && "$SKIP_CYCLE_TIME" == false && -n "$GH_REPO" ]]; then
     echo "── Step 2: Generating PR cycle time data ──"
 
+    CYCLE_TIME_JSON="$OUTPUT_DIR/cycle_time_data_${SAFE_NAME}.json"
+
     if ! command -v gh &>/dev/null; then
-        echo "  Warning: 'gh' CLI not found — skipping cycle time."
-        echo "  Install it: https://cli.github.com/"
+        echo "  Note: 'gh' CLI not installed — cycle time section will show as unavailable."
+        echo "  To enable: install from https://cli.github.com/ and run 'gh auth login'"
         echo ""
     elif ! gh auth token &>/dev/null 2>&1; then
-        echo "  Warning: 'gh' CLI not authenticated — skipping cycle time."
-        echo "  Run: gh auth login"
+        echo "  Note: 'gh' CLI not authenticated — cycle time section will show as unavailable."
+        echo "  To enable: run 'gh auth login'"
         echo ""
     else
         mkdir -p "$OUTPUT_DIR"
@@ -167,7 +169,6 @@ if [[ "$FETCH_ONLY" == false && "$SKIP_CYCLE_TIME" == false && -n "$GH_REPO" ]];
             --config "$CONFIG" \
             --repo "$GH_REPO" \
             --output-dir "$OUTPUT_DIR"
-        CYCLE_TIME_JSON="$OUTPUT_DIR/cycle_time_data_${SAFE_NAME}.json"
         echo ""
     fi
 elif [[ "$FETCH_ONLY" == false && "$SKIP_CYCLE_TIME" == false && -z "$GH_REPO" ]]; then
@@ -185,9 +186,11 @@ if [[ "$FETCH_ONLY" == false ]]; then
     mkdir -p "$OUTPUT_DIR"
 
     REPORT_ARGS=(--config "$CONFIG" --data "$DATA_FILE" --output-dir "$OUTPUT_DIR")
-    if [[ -n "$CYCLE_TIME_JSON" && -f "$CYCLE_TIME_JSON" ]]; then
+    if [[ -n "$CYCLE_TIME_JSON" ]]; then
         REPORT_ARGS+=(--cycle-time-data "$CYCLE_TIME_JSON")
-        [[ -n "$GH_REPO" ]] && REPORT_ARGS+=(--gh-repo "$GH_REPO")
+        if [[ -f "$CYCLE_TIME_JSON" && -n "$GH_REPO" ]]; then
+            REPORT_ARGS+=(--gh-repo "$GH_REPO")
+        fi
     fi
 
     python3 sprint_report.py "${REPORT_ARGS[@]}"

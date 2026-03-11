@@ -228,9 +228,13 @@ A consolidated view of key sprint health indicators.
 
 ---
 
-## 9. PR Cycle Time
+## 9. PR Cycle Time (optional)
 
-Generated from GitHub PR data via `cycle_time_report.py`. Appended to the main report if `--cycle-time-data` is provided.
+Generated from GitHub PR data via `cycle_time_report.py`. Requires the GitHub CLI (`gh`) to be installed and authenticated. If `gh` is not available, this section displays a note that cycle time data is unavailable — all other report sections work normally.
+
+To suppress the note entirely, use `--skip-cycle-time`.
+
+Appended to the main report when `--cycle-time-data` is provided and the data file exists.
 
 ### 9a. Cycle Time by Team Member
 

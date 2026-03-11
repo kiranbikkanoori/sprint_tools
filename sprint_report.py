@@ -162,6 +162,16 @@ def main():
                 ct_data, repo=args.gh_repo or ""
             )
             print(f"Cycle time data included from: {ct_path}")
+        elif ct_path:
+            report_text += (
+                "\n---\n"
+                "## PR Cycle Time\n\n"
+                "_Cycle time data was not generated._ "
+                "This section requires the GitHub CLI (`gh`) to be installed and authenticated.\n\n"
+                "To enable: `gh auth login`  \n"
+                "To suppress this note: use `--skip-cycle-time`\n"
+            )
+            print("Cycle time data file not found — section shows as unavailable.")
 
         report_path = output_dir / f"sprint_report_{safe_name}.md"
         report_path.write_text(report_text, encoding="utf-8")

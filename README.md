@@ -45,29 +45,31 @@ If no Jira MCP server is found, set it up in Cursor:
 2. Add your Jira MCP server (HTTP type)
 3. Verify it appears in `~/.cursor/mcp.json`
 
-### 4. GitHub CLI (for PR cycle time report — optional)
+### 4. GitHub CLI (optional — for PR cycle time report)
 
-Install:
+The PR cycle time section is **fully optional**. If `gh` is not installed or not
+authenticated, all other report sections (capacity, velocity, burndown, etc.) still
+work normally. The report will include a note that cycle time data is unavailable.
+
+To enable cycle time analysis:
+
 ```bash
-# Linux (Debian/Ubuntu)
+# Install (Linux/Debian/Ubuntu)
 sudo apt install gh
+# Or download from https://cli.github.com/
 
-# Or download manually
-# https://cli.github.com/
-```
-
-Authenticate:
-```bash
+# Authenticate
 gh auth login
 # Choose: GitHub.com → HTTPS → Login with a web browser
-# Follow the device code flow in your browser
 
-# Verify:
+# Verify
 gh auth status
 ```
 
-> The cycle time report is optional. If `gh` is not installed or not authenticated,
-> the report will be generated without cycle time data.
+To explicitly suppress the "unavailable" note in the report:
+```bash
+./run.sh --skip-cycle-time
+```
 
 ---
 
