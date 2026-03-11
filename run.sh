@@ -2,8 +2,8 @@
 #
 # Sprint Report Runner
 # ====================
-# Fetches data from Jira (via MCP gateway), generates the text report,
-# burndown chart, and PR cycle time report, then optionally cleans up.
+# Fetches data from Jira (via MCP gateway or direct REST API), generates the
+# text report, burndown chart, and PR cycle time report.
 #
 # Usage:
 #   ./run.sh                          # full run with defaults
@@ -13,6 +13,8 @@
 #   ./run.sh --board-id 1325          # optional: force a specific board
 #   ./run.sh --gh-repo OWNER/REPO     # GitHub repo for PR cycle time report
 #   ./run.sh --skip-cycle-time        # skip the PR cycle time report
+#   ./run.sh --no-mcp                 # skip MCP, use direct Jira REST API
+#   ./run.sh --jira-url URL           # override Jira base URL
 #   ./run.sh --cleanup                # delete generated files (data, output, pycache)
 #   ./run.sh --help
 #
@@ -32,6 +34,9 @@ FETCH_ONLY=false
 REPORT_ONLY=false
 SKIP_CYCLE_TIME=false
 GENERATE_FORMAT=false
+NO_MCP=false
+JIRA_URL=""
+JIRA_TOKEN_ARG=""
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 usage() {
@@ -43,6 +48,9 @@ Options:
   -o, --output-dir DIR    Output directory (default: ./output)
   --board-id ID           Jira board ID (skips board search; your board: 1325)
   --mcp-config PATH       Path to mcp.json (default: auto-detect ~/.cursor/mcp.json)
+  --no-mcp                Skip MCP gateway, use direct Jira REST API
+  --jira-url URL          Jira base URL (default: from .env.defaults or https://jira.silabs.com)
+  --jira-token TOKEN      Jira PAT (prefer JIRA_TOKEN env var or .env file instead)
   --gh-repo OWNER/REPO    GitHub repo for cycle time report (reads from config if omitted)
   --skip-cycle-time       Skip the PR cycle time report (Step 3)
   --generate-format       Generate REPORT_FORMAT.md (field reference) and exit
@@ -52,8 +60,9 @@ Options:
   -h, --help              Show this help
 
 Examples:
-  ./run.sh                                    # Full run with defaults
+  ./run.sh                                    # Full run (auto-detects MCP or REST)
   ./run.sh --board-id 1325                    # Full run, known board
+  ./run.sh --no-mcp                           # Full run, direct REST API (no Cursor needed)
   ./run.sh --gh-repo Org/repo                 # Full run with cycle time for specific repo
   ./run.sh --report-only -o ./my_output       # Re-generate from existing data
   ./run.sh --skip-cycle-time                  # Run without PR cycle time analysis
@@ -72,6 +81,9 @@ while [[ $# -gt 0 ]]; do
         --gh-repo)         GH_REPO="$2"; shift 2 ;;
         --skip-cycle-time) SKIP_CYCLE_TIME=true; shift ;;
         --generate-format) GENERATE_FORMAT=true; shift ;;
+        --no-mcp)          NO_MCP=true; shift ;;
+        --jira-url)        JIRA_URL="$2"; shift 2 ;;
+        --jira-token)      JIRA_TOKEN_ARG="$2"; shift 2 ;;
         --cleanup)         CLEANUP=true; shift ;;
         --fetch-only)      FETCH_ONLY=true; shift ;;
         --report-only)     REPORT_ONLY=true; shift ;;
@@ -134,6 +146,9 @@ if [[ "$REPORT_ONLY" == false ]]; then
     FETCH_ARGS=(--config "$CONFIG" --output "$DATA_FILE")
     [[ -n "$BOARD_ID" ]] && FETCH_ARGS+=(--board-id "$BOARD_ID")
     [[ -n "$MCP_CONFIG" ]] && FETCH_ARGS+=(--mcp-config "$MCP_CONFIG")
+    [[ "$NO_MCP" == true ]] && FETCH_ARGS+=(--no-mcp)
+    [[ -n "$JIRA_URL" ]] && FETCH_ARGS+=(--jira-url "$JIRA_URL")
+    [[ -n "$JIRA_TOKEN_ARG" ]] && FETCH_ARGS+=(--jira-token "$JIRA_TOKEN_ARG")
 
     python3 fetch_via_mcp.py "${FETCH_ARGS[@]}"
     echo ""

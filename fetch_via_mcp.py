@@ -1,36 +1,60 @@
 #!/usr/bin/env python3
 """
-Fetch sprint data by calling Jira tools through the MCP gateway.
+Fetch sprint data from Jira and export to portable JSON.
 
-Reads the MCP server URL and auth token from ~/.cursor/mcp.json
-(the same credentials Cursor IDE uses), so no extra Jira PAT is needed.
+Supports two modes (auto-detected):
+  1. MCP gateway  — uses ~/.cursor/mcp.json (works inside Cursor)
+  2. Direct REST   — uses Jira PAT from env var, .env file, mcp.json, or prompt
 
 Usage
 -----
-    # Auto-detect mcp.json location
-    python fetch_via_mcp.py --config ../sprint_report_config.md
+    # Auto-detect mode (tries MCP first, falls back to direct REST)
+    python fetch_via_mcp.py --config sprint_report_config.md
 
-    # Explicit mcp.json path
-    python fetch_via_mcp.py --config ../sprint_report_config.md --mcp-config ~/.cursor/mcp.json
+    # With known board ID (faster)
+    python fetch_via_mcp.py --config sprint_report_config.md --board-id 1325
 
-    # With known board ID (skips board search)
-    python fetch_via_mcp.py --config ../sprint_report_config.md --board-id 1325
+    # Force direct REST API (skip MCP)
+    python fetch_via_mcp.py --config sprint_report_config.md --no-mcp
+
+    # Provide PAT via env var
+    JIRA_TOKEN=your-pat python fetch_via_mcp.py --config sprint_report_config.md
+
+    # Override Jira URL
+    python fetch_via_mcp.py --config sprint_report_config.md --jira-url https://jira.example.com
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
+import re
 import sys
 import uuid
 from pathlib import Path
 
 import requests
+from requests.auth import AuthBase
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
 from utils import parse_jira_time_to_hours
+
+
+DEFAULT_JIRA_URL = "https://jira.silabs.com"
+SPRINT_FIELDS_REST = (
+    "summary,status,issuetype,assignee,timetracking,parent,subtasks,"
+    "resolutiondate,customfield_10344,customfield_10028,customfield_10016,"
+    "customfield_10026,customfield_10004"
+)
+SPRINT_FIELDS_MCP = (
+    "summary,status,issuetype,assignee,timetracking,parent,subtasks,"
+    "resolutiondate,story_points,customfield_10344,customfield_10028,"
+    "customfield_10016,customfield_10026,customfield_10004"
+)
 
 
 # ── MCP HTTP Client ─────────────────────────────────────────────────────────
@@ -41,7 +65,6 @@ class McpClient:
     def __init__(self, url: str, headers: dict):
         self.url = url.rstrip("/")
         self.session = requests.Session()
-        # Gateway requires both content types in Accept — set BEFORE auth headers
         self.session.headers["Content-Type"] = "application/json"
         self.session.headers["Accept"] = "application/json, text/event-stream"
         self.session.headers.update(headers)
@@ -49,7 +72,6 @@ class McpClient:
         self._initialize()
 
     def _initialize(self):
-        """Send MCP initialize handshake and capture session ID."""
         resp = self._raw_post({
             "jsonrpc": "2.0",
             "method": "initialize",
@@ -64,7 +86,6 @@ class McpClient:
             self.session_id = resp.headers["Mcp-Session-Id"]
             self.session.headers["Mcp-Session-Id"] = self.session_id
 
-        # Send initialized notification (expect 202)
         self.session.post(self.url, json={
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
@@ -76,7 +97,6 @@ class McpClient:
         return resp
 
     def call_tool(self, tool_name: str, arguments: dict) -> any:
-        """Call an MCP tool and return the parsed result."""
         body = {
             "jsonrpc": "2.0",
             "method": "tools/call",
@@ -93,7 +113,6 @@ class McpClient:
             return self._extract_result(data)
 
     def _parse_sse(self, text: str) -> any:
-        """Parse Server-Sent Events response to extract tool result."""
         for line in text.splitlines():
             if line.startswith("data: "):
                 try:
@@ -106,7 +125,6 @@ class McpClient:
         return None
 
     def _extract_result(self, data: dict) -> any:
-        """Extract the text content from an MCP tool response."""
         if "error" in data:
             raise RuntimeError(f"MCP error: {data['error']}")
         result = data.get("result", {})
@@ -120,18 +138,61 @@ class McpClient:
         return result
 
 
-# ── Data conversion ─────────────────────────────────────────────────────────
+# ── Direct Jira REST Client ─────────────────────────────────────────────────
 
-def classify_issue(issue: dict) -> str:
-    has_parent = issue.get("parent") is not None
-    subtasks = issue.get("subtasks", [])
-    has_subtasks = bool(subtasks) and len(subtasks) > 0
-    if has_subtasks and not has_parent:
-        return "Parent"
-    if has_parent:
-        return "Sub-task"
-    return "Standalone"
+class BearerAuth(AuthBase):
+    def __init__(self, token: str):
+        self.token = token
 
+    def __call__(self, r):
+        r.headers["Authorization"] = f"Bearer {self.token}"
+        return r
+
+
+class JiraRestClient:
+    """Direct Jira REST API client using a PAT."""
+
+    def __init__(self, base_url: str, pat: str):
+        self.base_url = base_url.rstrip("/")
+        self.session = requests.Session()
+        self.session.auth = BearerAuth(pat)
+        self.session.headers["Content-Type"] = "application/json"
+
+    def _get(self, path: str, params: dict | None = None) -> dict:
+        resp = self.session.get(f"{self.base_url}{path}", params=params, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+    def find_boards(self, name: str, board_type: str = "scrum") -> list[dict]:
+        data = self._get("/rest/agile/1.0/board", {"type": board_type, "name": name, "maxResults": 20})
+        return data.get("values", [])
+
+    def get_sprints(self, board_id: int, state: str | None = None) -> list[dict]:
+        params = {"maxResults": 50}
+        if state:
+            params["state"] = state
+        data = self._get(f"/rest/agile/1.0/board/{board_id}/sprint", params)
+        return data.get("values", [])
+
+    def get_sprint_issues(self, sprint_id: int, fields: str = SPRINT_FIELDS_REST) -> list[dict]:
+        all_issues = []
+        start_at = 0
+        while True:
+            params = {"fields": fields, "startAt": start_at, "maxResults": 50}
+            data = self._get(f"/rest/agile/1.0/sprint/{sprint_id}/issue", params)
+            issues = data.get("issues", [])
+            all_issues.extend(issues)
+            if start_at + len(issues) >= data.get("total", 0) or not issues:
+                break
+            start_at += len(issues)
+        return all_issues
+
+    def get_worklogs(self, issue_key: str) -> list[dict]:
+        data = self._get(f"/rest/api/2/issue/{issue_key}/worklog")
+        return data.get("worklogs", [])
+
+
+# ── Shared data conversion ──────────────────────────────────────────────────
 
 STORY_POINT_FIELDS = [
     "story_points", "customfield_10344", "customfield_10028",
@@ -158,7 +219,33 @@ def extract_story_points(raw: dict) -> float | None:
     return None
 
 
-def convert_issue(raw: dict) -> dict:
+def _classify_mcp(issue: dict) -> str:
+    """Classify from MCP response (fields at top level)."""
+    has_parent = issue.get("parent") is not None
+    subtasks = issue.get("subtasks", [])
+    has_subtasks = bool(subtasks) and len(subtasks) > 0
+    if has_subtasks and not has_parent:
+        return "Parent"
+    if has_parent:
+        return "Sub-task"
+    return "Standalone"
+
+
+def _classify_rest(raw: dict) -> str:
+    """Classify from REST response (fields nested under 'fields')."""
+    fields = raw.get("fields", {})
+    has_parent = fields.get("parent") is not None
+    subtasks = fields.get("subtasks", [])
+    has_subtasks = bool(subtasks) and len(subtasks) > 0
+    if has_subtasks and not has_parent:
+        return "Parent"
+    if has_parent:
+        return "Sub-task"
+    return "Standalone"
+
+
+def convert_issue_mcp(raw: dict) -> dict:
+    """Convert an issue from MCP gateway response (fields at top level)."""
     tt = raw.get("timetracking", {}) or {}
     est_raw = tt.get("original_estimate", "0") or "0"
     assignee = raw.get("assignee") or {}
@@ -173,7 +260,7 @@ def convert_issue(raw: dict) -> dict:
         "summary": raw.get("summary", ""),
         "status": status.get("name", "Unknown"),
         "status_category": status.get("category", "Unknown"),
-        "type": classify_issue(raw),
+        "type": _classify_mcp(raw),
         "assignee": assignee.get("display_name", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
@@ -183,19 +270,56 @@ def convert_issue(raw: dict) -> dict:
     }
 
 
-def convert_worklog_entry(wl: dict) -> dict:
-    started = wl.get("started", "")[:10]
+def convert_issue_rest(raw: dict) -> dict:
+    """Convert an issue from direct Jira REST API response (fields nested)."""
+    fields = raw.get("fields", {})
+    tt = fields.get("timetracking", {}) or {}
+    est_raw = tt.get("originalEstimate", "0") or "0"
+    assignee = fields.get("assignee") or {}
+    status = fields.get("status", {})
+    parent = fields.get("parent")
+
+    resolution_date = fields.get("resolutiondate") or ""
+    if isinstance(resolution_date, str):
+        resolution_date = resolution_date[:10]
+
     return {
-        "started": started,
+        "key": raw["key"],
+        "summary": fields.get("summary", ""),
+        "status": status.get("name", "Unknown"),
+        "status_category": status.get("statusCategory", {}).get("name", "Unknown"),
+        "type": _classify_rest(raw),
+        "assignee": assignee.get("displayName", "Unassigned"),
+        "estimate_hours": parse_jira_time_to_hours(est_raw),
+        "estimate_raw": est_raw,
+        "story_points": extract_story_points(fields),
+        "resolution_date": resolution_date,
+        "parent_key": parent.get("key") if parent else None,
+    }
+
+
+def convert_worklog_mcp(wl: dict) -> dict:
+    """Convert worklog from MCP response."""
+    return {
+        "started": wl.get("started", "")[:10],
         "seconds": wl.get("timeSpentSeconds", 0),
         "author": wl.get("author", "Unknown"),
+    }
+
+
+def convert_worklog_rest(wl: dict) -> dict:
+    """Convert worklog from direct REST response."""
+    author_obj = wl.get("author", {})
+    return {
+        "started": wl.get("started", "")[:10],
+        "seconds": wl.get("timeSpentSeconds", 0),
+        "author": author_obj.get("displayName", "Unknown"),
     }
 
 
 # ── MCP config loading ─────────────────────────────────────────────────────
 
 def find_mcp_config() -> Path | None:
-    """Search standard locations for mcp.json."""
     candidates = [
         Path.home() / ".cursor" / "mcp.json",
         Path.cwd().parent / ".cursor" / "mcp.json",
@@ -207,9 +331,12 @@ def find_mcp_config() -> Path | None:
     return None
 
 
-def load_jira_mcp_config(mcp_path: Path) -> tuple[str, dict]:
-    """Extract Jira MCP server URL and headers from mcp.json."""
-    data = json.loads(mcp_path.read_text())
+def load_jira_mcp_config(mcp_path: Path) -> tuple[str, dict] | None:
+    """Extract Jira MCP server URL and headers from mcp.json. Returns None if not found."""
+    try:
+        data = json.loads(mcp_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
     servers = data.get("mcpServers", {})
 
     for name, cfg in servers.items():
@@ -217,19 +344,89 @@ def load_jira_mcp_config(mcp_path: Path) -> tuple[str, dict]:
             url = cfg["url"]
             headers = cfg.get("headers", {})
             return url, headers
-
-    print("Error: no Jira HTTP MCP server found in mcp.json.", file=sys.stderr)
-    print(f"Servers found: {list(servers.keys())}", file=sys.stderr)
-    sys.exit(1)
+    return None
 
 
-# ── Sprint search (via MCP tools) ───────────────────────────────────────────
+def extract_pat_from_mcp_config(mcp_path: Path) -> str | None:
+    """Extract the Jira PAT from mcp.json Authorization header."""
+    result = load_jira_mcp_config(mcp_path)
+    if not result:
+        return None
+    _url, headers = result
+    auth_header = headers.get("Authorization", "")
+    for prefix in ["Token ", "Bearer ", "token ", "bearer "]:
+        if auth_header.startswith(prefix):
+            return auth_header[len(prefix):].strip()
+    if auth_header:
+        return auth_header.strip()
+    return None
 
-def find_sprint_by_name(client: McpClient, sprint_name: str) -> dict | None:
-    """
-    Find a sprint by name using JQL search.  This avoids having to know
-    the board ID — Jira finds the sprint across all boards.
-    """
+
+# ── Credential resolution ───────────────────────────────────────────────────
+
+def load_env_file(path: Path):
+    """Load KEY=VALUE pairs from a file into os.environ (setdefault, won't overwrite)."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            value = value.strip().strip("'\"")
+            os.environ.setdefault(key.strip(), value)
+
+
+def resolve_jira_url(cli_arg: str | None) -> str:
+    """Resolve Jira base URL with priority: CLI arg > env var > .env > .env.defaults > hardcoded."""
+    if cli_arg:
+        return cli_arg.rstrip("/")
+
+    script_dir = Path(__file__).resolve().parent
+
+    load_env_file(script_dir / ".env")
+    load_env_file(script_dir.parent / ".env")
+    load_env_file(script_dir / ".env.defaults")
+
+    return os.environ.get("JIRA_BASE_URL", DEFAULT_JIRA_URL).rstrip("/")
+
+
+def resolve_jira_pat(cli_arg: str | None) -> str:
+    """Resolve Jira PAT with priority: CLI arg > env var > .env > mcp.json > interactive prompt."""
+    if cli_arg:
+        return cli_arg
+
+    script_dir = Path(__file__).resolve().parent
+    load_env_file(script_dir / ".env")
+    load_env_file(script_dir.parent / ".env")
+
+    token = os.environ.get("JIRA_TOKEN")
+    if token:
+        return token
+
+    mcp_path = find_mcp_config()
+    if mcp_path:
+        pat = extract_pat_from_mcp_config(mcp_path)
+        if pat:
+            print(f"  Using Jira PAT extracted from {mcp_path}")
+            return pat
+
+    print()
+    print("  No Jira PAT found in environment or mcp.json.")
+    print("  Create one at: Jira → Profile → Personal Access Tokens")
+    print("  Or set JIRA_TOKEN env var / add to .env file.")
+    print()
+    pat = getpass.getpass("  Enter Jira PAT: ").strip()
+    if not pat:
+        print("Error: no PAT provided.", file=sys.stderr)
+        sys.exit(1)
+    return pat
+
+
+# ── Sprint search (MCP) ────────────────────────────────────────────────────
+
+def find_sprint_by_name_mcp(client: McpClient, sprint_name: str) -> dict | None:
     jql = f'sprint = "{sprint_name}"'
     result = client.call_tool("jira_search", {
         "jql": jql, "fields": "summary", "limit": 1,
@@ -238,20 +435,16 @@ def find_sprint_by_name(client: McpClient, sprint_name: str) -> dict | None:
     if not issues:
         return None
 
-    # We found issues in this sprint — now get the sprint details
-    # by checking any issue's sprint field
     sample_key = issues[0]["key"]
     issue = client.call_tool("jira_get_issue", {
         "issue_key": sample_key, "fields": "*all",
     })
     fields = issue.get("fields", {})
 
-    # Sprint info is in the 'sprint' field (Jira Agile)
     sprint_field = fields.get("sprint")
     if sprint_field and sprint_field.get("name") == sprint_name:
         return sprint_field
 
-    # Fallback: check customfield_10020 (common sprint custom field)
     for cf_name in ["customfield_10020", "customfield_10100", "customfield_10010"]:
         cf = fields.get(cf_name)
         if isinstance(cf, list):
@@ -260,12 +453,10 @@ def find_sprint_by_name(client: McpClient, sprint_name: str) -> dict | None:
                     return s
         elif isinstance(cf, dict) and cf.get("name") == sprint_name:
             return cf
-
     return None
 
 
-def find_sprint_on_board(client: McpClient, board_id: str, sprint_name: str) -> dict | None:
-    """Search for a sprint on a specific board (active → future → closed)."""
+def find_sprint_on_board_mcp(client: McpClient, board_id: str, sprint_name: str) -> dict | None:
     all_found = []
     for state in ["active", "future", "closed"]:
         sprints = client.call_tool("jira_get_sprints_from_board", {
@@ -278,17 +469,11 @@ def find_sprint_on_board(client: McpClient, board_id: str, sprint_name: str) -> 
             if s.get("name") == sprint_name:
                 return s
 
-    print(f"\n  Sprint '{sprint_name}' not found on board {board_id}.", file=sys.stderr)
-    print(f"  Available sprints:", file=sys.stderr)
-    for s in all_found[:15]:
-        print(f"    - {s.get('name')} [{s.get('state')}]", file=sys.stderr)
-    if len(all_found) > 15:
-        print(f"    ... and {len(all_found) - 15} more", file=sys.stderr)
+    _print_sprint_not_found(sprint_name, board_id, all_found)
     return None
 
 
 def find_board_via_mcp(client: McpClient, sprint_name: str) -> dict | None:
-    """Find a board by deriving keywords from the sprint name."""
     keywords = sprint_name.replace("_", " ").split()
     while keywords and keywords[-1].isdigit():
         keywords.pop()
@@ -302,11 +487,9 @@ def find_board_via_mcp(client: McpClient, sprint_name: str) -> dict | None:
         })
         if not boards:
             continue
-
         candidates = [b for b in boards if "copy" not in b.get("name", "").lower()]
         if not candidates:
             continue
-
         candidates.sort(key=lambda b: (
             not b.get("name", "").lower().startswith(term.lower()),
             len(b.get("name", "")),
@@ -314,72 +497,81 @@ def find_board_via_mcp(client: McpClient, sprint_name: str) -> dict | None:
         best = candidates[0]
         print(f"  Board matched '{term}' → {best['name']} (ID: {best['id']})")
         return best
-
     return None
 
 
-# ── Main ────────────────────────────────────────────────────────────────────
+# ── Sprint search (REST) ───────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Fetch sprint data via MCP gateway (uses credentials from mcp.json).",
-    )
-    parser.add_argument("--config", "-c", required=True, help="Path to sprint_report_config.md")
-    parser.add_argument("--output", "-o", default=None, help="Output JSON path")
-    parser.add_argument("--board-id", type=int, default=None, help="Jira board ID (skips search)")
-    parser.add_argument("--mcp-config", default=None, help="Path to mcp.json (auto-detected if omitted)")
-    args = parser.parse_args()
+def find_sprint_on_board_rest(client: JiraRestClient, board_id: int, sprint_name: str) -> dict | None:
+    all_found = []
+    for state in ["active", "future", "closed"]:
+        sprints = client.get_sprints(board_id, state=state)
+        for s in sprints:
+            all_found.append(s)
+            if s.get("name") == sprint_name:
+                return s
 
-    # Load MCP config
-    if args.mcp_config:
-        mcp_path = Path(args.mcp_config)
-    else:
-        mcp_path = find_mcp_config()
-    if not mcp_path or not mcp_path.exists():
-        print("Error: mcp.json not found.", file=sys.stderr)
-        print("Provide path with --mcp-config or ensure ~/.cursor/mcp.json exists.", file=sys.stderr)
-        sys.exit(1)
+    _print_sprint_not_found(sprint_name, board_id, all_found)
+    return None
 
-    print(f"Using MCP config: {mcp_path}")
-    url, headers = load_jira_mcp_config(mcp_path)
-    print(f"Jira MCP gateway: {url}")
 
-    config = parse_config(args.config)
-    sprint_name = config.sprint_name
-    if not sprint_name:
-        print("Error: no sprint name in config.", file=sys.stderr)
-        sys.exit(1)
+def find_board_rest(client: JiraRestClient, sprint_name: str) -> dict | None:
+    keywords = sprint_name.replace("_", " ").split()
+    while keywords and keywords[-1].isdigit():
+        keywords.pop()
+    if not keywords:
+        keywords = sprint_name.replace("_", " ").split()
 
-    safe_name = sprint_name.replace(" ", "_")
-    output_path = Path(args.output) if args.output else Path(f"sprint_data_{safe_name}.json")
+    for i in range(len(keywords), 0, -1):
+        term = " ".join(keywords[:i])
+        boards = client.find_boards(term)
+        if not boards:
+            continue
+        candidates = [b for b in boards if "copy" not in b.get("name", "").lower()]
+        if not candidates:
+            continue
+        candidates.sort(key=lambda b: (
+            not b.get("name", "").lower().startswith(term.lower()),
+            len(b.get("name", "")),
+        ))
+        best = candidates[0]
+        print(f"  Board matched '{term}' → {best['name']} (ID: {best['id']})")
+        return best
+    return None
 
-    # Connect
+
+def _print_sprint_not_found(sprint_name: str, board_id, all_found: list):
+    print(f"\n  Sprint '{sprint_name}' not found on board {board_id}.", file=sys.stderr)
+    print("  Available sprints:", file=sys.stderr)
+    for s in all_found[:15]:
+        print(f"    - {s.get('name')} [{s.get('state')}]", file=sys.stderr)
+    if len(all_found) > 15:
+        print(f"    ... and {len(all_found) - 15} more", file=sys.stderr)
+
+
+# ── Fetch via MCP ───────────────────────────────────────────────────────────
+
+def fetch_via_mcp(mcp_url: str, mcp_headers: dict, sprint_name: str, board_id: int | None, output_path: Path):
+    """Fetch sprint data using the MCP gateway."""
     print("Connecting to MCP gateway...")
-    client = McpClient(url, headers)
+    client = McpClient(mcp_url, mcp_headers)
     print("Connected.")
 
-    # ── Find sprint ──────────────────────────────────────────────────────
     sprint = None
-
-    if args.board_id:
-        # Board ID given explicitly — search on that board
-        print(f"Looking for sprint '{sprint_name}' on board {args.board_id}")
-        sprint = find_sprint_on_board(client, str(args.board_id), sprint_name)
+    if board_id:
+        print(f"Looking for sprint '{sprint_name}' on board {board_id}")
+        sprint = find_sprint_on_board_mcp(client, str(board_id), sprint_name)
     else:
-        # Strategy 1: find sprint directly by name via JQL (fastest, no board needed)
         print(f"Searching for sprint: {sprint_name}")
-        sprint = find_sprint_by_name(client, sprint_name)
-
+        sprint = find_sprint_by_name_mcp(client, sprint_name)
         if not sprint:
-            # Strategy 2: guess the board from sprint name, then search sprints
             print("  JQL lookup didn't return sprint details, trying board search...")
             board = find_board_via_mcp(client, sprint_name)
             if board:
-                sprint = find_sprint_on_board(client, str(board["id"]), sprint_name)
+                sprint = find_sprint_on_board_mcp(client, str(board["id"]), sprint_name)
 
     if not sprint:
         print(f"\nError: sprint '{sprint_name}' not found.", file=sys.stderr)
-        print("Check that the sprint name in your config matches Jira exactly.", file=sys.stderr)
         sys.exit(1)
 
     sprint_id = str(sprint["id"])
@@ -388,14 +580,13 @@ def main():
     goal = sprint.get("goal", "")
     print(f"Found: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
 
-    # ── Fetch issues (paginated) ─────────────────────────────────────────
     print("Fetching issues...", end="", flush=True)
     all_raw_issues = []
     start_at = 0
     while True:
         result = client.call_tool("jira_get_sprint_issues", {
             "sprint_id": sprint_id,
-            "fields": "summary,status,issuetype,assignee,timetracking,parent,subtasks,resolutiondate,story_points,customfield_10344,customfield_10028,customfield_10016,customfield_10026,customfield_10004",
+            "fields": SPRINT_FIELDS_MCP,
             "start_at": start_at,
             "limit": 50,
         })
@@ -408,23 +599,73 @@ def main():
         start_at += len(issues_batch)
     print(" done.")
 
-    issues = [convert_issue(i) for i in all_raw_issues]
+    issues = [convert_issue_mcp(i) for i in all_raw_issues]
     parent_keys = {i["key"] for i in issues if i["type"] == "Parent"}
 
-    # ── Fetch worklogs ───────────────────────────────────────────────────
     tickets_to_fetch = [i["key"] for i in issues if i["key"] not in parent_keys]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
-
     worklogs: dict[str, list[dict]] = {}
     for idx, key in enumerate(tickets_to_fetch):
         result = client.call_tool("jira_get_worklog", {"issue_key": key})
         raw_wl = result.get("worklogs", []) if isinstance(result, dict) else []
-        worklogs[key] = [convert_worklog_entry(wl) for wl in raw_wl]
+        worklogs[key] = [convert_worklog_mcp(wl) for wl in raw_wl]
         if (idx + 1) % 5 == 0:
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
 
-    # ── Write JSON ───────────────────────────────────────────────────────
+    _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
+
+
+# ── Fetch via direct REST ───────────────────────────────────────────────────
+
+def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | None, output_path: Path):
+    """Fetch sprint data using direct Jira REST API."""
+    print(f"Connecting to Jira REST API at {base_url}...")
+    client = JiraRestClient(base_url, pat)
+
+    sprint = None
+    if board_id:
+        print(f"Looking for sprint '{sprint_name}' on board {board_id}")
+        sprint = find_sprint_on_board_rest(client, board_id, sprint_name)
+    else:
+        print(f"Searching for sprint: {sprint_name}")
+        board = find_board_rest(client, sprint_name)
+        if board:
+            sprint = find_sprint_on_board_rest(client, board["id"], sprint_name)
+
+    if not sprint:
+        print(f"\nError: sprint '{sprint_name}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    sprint_id = sprint["id"]
+    start_date = (sprint.get("startDate") or sprint.get("start_date", ""))[:10]
+    end_date = (sprint.get("endDate") or sprint.get("end_date", ""))[:10]
+    goal = sprint.get("goal", "")
+    print(f"Found: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
+
+    print("Fetching issues...", end="", flush=True)
+    all_raw_issues = client.get_sprint_issues(sprint_id, fields=SPRINT_FIELDS_REST)
+    print(f" {len(all_raw_issues)} done.")
+
+    issues = [convert_issue_rest(i) for i in all_raw_issues]
+    parent_keys = {i["key"] for i in issues if i["type"] == "Parent"}
+
+    tickets_to_fetch = [i["key"] for i in issues if i["key"] not in parent_keys]
+    print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
+    worklogs: dict[str, list[dict]] = {}
+    for idx, key in enumerate(tickets_to_fetch):
+        raw_wl = client.get_worklogs(key)
+        worklogs[key] = [convert_worklog_rest(wl) for wl in raw_wl]
+        if (idx + 1) % 5 == 0:
+            print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
+    print(" done.")
+
+    _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
+
+
+# ── Shared output ───────────────────────────────────────────────────────────
+
+def _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path):
     data = {
         "sprint": {
             "name": sprint_name,
@@ -435,13 +676,60 @@ def main():
         "issues": issues,
         "worklogs": worklogs,
     }
-
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
     print(f"\nSprint data exported to: {output_path}")
     print(f"Issues: {len(issues)} ({len(parent_keys)} parents, {len(tickets_to_fetch)} sub-tasks/standalone)")
     print(f"Worklogs: {sum(len(v) for v in worklogs.values())} entries")
+
+
+# ── Main ────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fetch sprint data from Jira (MCP gateway or direct REST API).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("--config", "-c", required=True, help="Path to sprint_report_config.md")
+    parser.add_argument("--output", "-o", default=None, help="Output JSON path")
+    parser.add_argument("--board-id", type=int, default=None, help="Jira board ID (skips search)")
+    parser.add_argument("--mcp-config", default=None, help="Path to mcp.json (auto-detected if omitted)")
+    parser.add_argument("--no-mcp", action="store_true", help="Skip MCP gateway, use direct Jira REST API")
+    parser.add_argument("--jira-url", default=None, help=f"Jira base URL (default: {DEFAULT_JIRA_URL})")
+    parser.add_argument("--jira-token", default=None, help="Jira PAT (prefer JIRA_TOKEN env var instead)")
+    args = parser.parse_args()
+
+    config = parse_config(args.config)
+    sprint_name = config.sprint_name
+    if not sprint_name:
+        print("Error: no sprint name in config.", file=sys.stderr)
+        sys.exit(1)
+
+    safe_name = sprint_name.replace(" ", "_")
+    output_path = Path(args.output) if args.output else Path(f"sprint_data_{safe_name}.json")
+
+    # ── Try MCP gateway first ────────────────────────────────────────────
+    if not args.no_mcp:
+        mcp_path = Path(args.mcp_config) if args.mcp_config else find_mcp_config()
+        if mcp_path and mcp_path.exists():
+            mcp_result = load_jira_mcp_config(mcp_path)
+            if mcp_result:
+                mcp_url, mcp_headers = mcp_result
+                print(f"Mode: MCP gateway ({mcp_url})")
+                try:
+                    fetch_via_mcp(mcp_url, mcp_headers, sprint_name, args.board_id, output_path)
+                    return
+                except Exception as e:
+                    print(f"\nMCP gateway failed: {e}", file=sys.stderr)
+                    print("Falling back to direct Jira REST API...\n")
+
+    # ── Fallback: direct REST API ────────────────────────────────────────
+    base_url = resolve_jira_url(args.jira_url)
+    print(f"Mode: Direct Jira REST API ({base_url})")
+    pat = resolve_jira_pat(args.jira_token)
+    fetch_via_rest(base_url, pat, sprint_name, args.board_id, output_path)
 
 
 if __name__ == "__main__":

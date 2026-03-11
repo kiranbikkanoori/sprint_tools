@@ -1,0 +1,5 @@
+output/
+sprint_data_*.json
+__pycache__/
+*.pyc
+.env
