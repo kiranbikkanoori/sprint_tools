@@ -90,20 +90,112 @@ Output files appear in `./output/`:
 
 ---
 
-## Configuration
+## Configuration — `sprint_report_config.md`
 
-Edit `sprint_report_config.md` before each sprint. Key sections:
+Edit this file before each sprint. Below is a field-by-field guide.
 
-| Section | What to update |
-|---------|----------------|
-| **Sprint Name** | Must match the Jira sprint name exactly |
-| **Sprint Duration** | Number of weeks |
-| **GitHub Repo** | `Owner/RepoName` for cycle time analysis |
-| **Team Members** | Add/remove members, set Include = Yes/No |
-| **Planned Leaves** | Name and number of leave days |
-| **Meeting Days Reserved** | Days per person for ceremonies |
-| **Excluded Tickets** | Ticket keys to skip |
-| **Report Options** | Toggle per-ticket details, daily log gaps, cycle time |
+### Sprint Details
+
+| Field | Format | Example | Notes |
+|-------|--------|---------|-------|
+| **Sprint Name** | Backtick-wrapped string | `` `Wi-Fi_LMAC_2026_5` `` | Must match the Jira sprint name **exactly** (case-sensitive). The script uses this to find the sprint. |
+| **Sprint Duration (weeks)** | Number | `` `2` `` | Used for capacity calculation (working days = weeks × 5). |
+| **GitHub Repo** | `Owner/RepoName` | `` `SiliconLabsInternal/wifi-nwp-firmware` `` | Required for PR cycle time report. Leave empty to skip. |
+
+### Team Members
+
+A table of all sprint participants. Each row has:
+
+| Column | Values | Effect |
+|--------|--------|--------|
+| Name | Full display name | Must match the **Jira display name** exactly (used to match worklogs). |
+| Role | Any text | For reference only, not used in calculations. |
+| Include in Report | `Yes` / `No` | `No` excludes the person from all calculations (e.g., managers). |
+
+**Example:**
+```markdown
+| # | Name | Role | Include in Report |
+|---|------|------|-------------------|
+| 1 | Sunil Jangiti | Developer | Yes |
+| 2 | Trinadh Angara | Manager | No |
+```
+
+**When to update:** Add new members, remove people who left, set `No` for anyone not doing sprint work.
+
+### Capacity Adjustments
+
+#### Meeting Days Reserved
+
+```markdown
+- **Days reserved**: `1`
+```
+
+This many days are deducted from **each person's** capacity. For a 2-week sprint (10 working days) with 1d reserved → 9 effective days (72h) per person.
+
+#### Planned Leaves
+
+```markdown
+| Name | Leave Days | Notes |
+|------|-----------|-------|
+| Kiran Bikkanoori | 3 | 3d leave |
+| | | |
+```
+
+Add a row for each person with planned leave. Name must match the Team Members table exactly. Leave blank rows for unused slots.
+
+#### Other Non-Development Activities
+
+```markdown
+| Name | Hours Excluded | Reason |
+|------|---------------|--------|
+| Jane Doe | 8 | Production support rotation |
+```
+
+Hours deducted from a person's capacity for recurring non-sprint work (support, mentoring, etc.).
+
+### Extra Tickets
+
+Tickets **not** in the sprint that should still be tracked:
+
+```markdown
+| Ticket Key | Assignee | Notes |
+|------------|----------|-------|
+| PROJ-999 | Jane Doe | Backlog item being worked on |
+```
+
+### Tickets to Exclude
+
+Tickets **in** the sprint that should be ignored (umbrella/tracking tickets, duplicates):
+
+```markdown
+| Ticket Key | Reason |
+|------------|--------|
+| PROJ-100 | Umbrella story, no actual work |
+```
+
+### Report Options
+
+| Option | Values | Default | Effect |
+|--------|--------|---------|--------|
+| **Report Date** | `YYYY-MM-DD` or empty | Today | Worklogs and burndown chart cut off at this date. Use for mid-sprint snapshots. |
+| **Exclude parent story estimates** | `Yes` / `No` | `Yes` | Prevents double-counting when parent stories have estimates that duplicate sub-task totals. |
+| **Show per-ticket worklog details** | `Yes` / `No` | `Yes` | Includes the per-ticket breakdown table for each person. |
+| **Show daily log gaps** | `Yes` / `No` | `Yes` | Shows days where a team member logged zero hours. |
+| **Generate PR cycle time report** | `Yes` / `No` | `Yes` | Enables GitHub PR analysis. Requires `gh` CLI and GitHub Repo to be set. |
+
+### Sprint Metrics Definitions
+
+This section is informational — it documents what completion rate and velocity mean. No changes needed unless you want to update the target thresholds (targets are displayed in the report but not enforced by code).
+
+### What to Change Each Sprint
+
+Typically you only need to update these fields:
+
+1. **Sprint Name** — new sprint name
+2. **Planned Leaves** — clear old entries, add new ones
+3. **Tickets to Exclude** — clear old entries, add new ones if needed
+4. **Team Members** — add/remove members or change Include status
+5. **Report Date** — clear it (leave empty for today) unless you want a specific date
 
 ---
 
