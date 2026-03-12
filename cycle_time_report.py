@@ -513,13 +513,24 @@ def main():
     issues = sprint_data.get("issues", [])
     repo_display = args.repo or "(from Jira dev-status)"
 
-    tickets = [i for i in issues if i.get("type") != "Parent"]
+    sprint_start = sprint_data.get("sprint", {}).get("start_date", "")
+    all_non_parents = [i for i in issues if i.get("type") != "Parent"]
+
+    # Exclude tickets resolved before the sprint started (carryovers from previous sprints)
+    tickets = []
+    carryover_count = 0
+    for t in all_non_parents:
+        rd = t.get("resolution_date", "")
+        if sprint_start and rd and rd < sprint_start:
+            carryover_count += 1
+        else:
+            tickets.append(t)
 
     has_pr_info = any(t.get("pull_requests") is not None for t in tickets)
 
     print(f"Sprint:  {sprint_name}")
     print(f"Repo:    {repo_display}")
-    print(f"Tickets: {len(tickets)} (excluding parent stories)")
+    print(f"Tickets: {len(tickets)} (excluding {carryover_count} carryovers and parent stories)")
     print(f"PR source: {'Jira dev-status' if has_pr_info else 'GitHub search (fallback)'}")
     print()
 

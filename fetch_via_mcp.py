@@ -383,6 +383,7 @@ def enrich_issues_with_pr_info(
     raw_issues: list[dict],
     jira_base_url: str,
     jira_pat: str,
+    sprint_start_date: str = "",
 ) -> None:
     """
     For each issue, call the dev-status API to get linked PRs and
@@ -390,12 +391,29 @@ def enrich_issues_with_pr_info(
 
     *raw_issues* are the original Jira API response objects containing the
     issue ID (the ``"id"`` field, present in both MCP and REST responses).
+
+    Tickets resolved before *sprint_start_date* are skipped (carryovers
+    from previous sprints).
     """
     raw_by_key = {r.get("key", r.get("id")): r for r in raw_issues}
 
-    print(f"Fetching PR links from Jira dev-status...", end="", flush=True)
-    fetched = 0
+    eligible = []
+    skipped = 0
     for issue in issues:
+        rd = issue.get("resolution_date", "")
+        if sprint_start_date and rd and rd < sprint_start_date:
+            skipped += 1
+            continue
+        if issue.get("type") == "Parent":
+            continue
+        eligible.append(issue)
+
+    if skipped:
+        print(f"  Skipping {skipped} ticket(s) resolved before sprint start ({sprint_start_date}).")
+
+    print(f"Fetching PR links from Jira dev-status for {len(eligible)} tickets...", end="", flush=True)
+    fetched = 0
+    for issue in eligible:
         key = issue["key"]
         raw = raw_by_key.get(key, {})
         issue_id = str(raw.get("id", ""))
@@ -406,10 +424,10 @@ def enrich_issues_with_pr_info(
         issue["pull_requests"] = prs
         fetched += 1
         if fetched % 5 == 0:
-            print(f" {fetched}/{len(issues)}", end="", flush=True)
+            print(f" {fetched}/{len(eligible)}", end="", flush=True)
     print(" done.")
     pr_total = sum(len(i.get("pull_requests", [])) for i in issues)
-    print(f"  PR links found: {pr_total} across {len(issues)} issues")
+    print(f"  PR links found: {pr_total} across {len(eligible)} tickets")
 
 
 def resolve_jira_pat_optional(cli_arg: str | None) -> str | None:
@@ -629,14 +647,23 @@ def fetch_via_mcp(
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
 
-    # Enrich issues with PR info from dev-status API (requires Jira PAT)
-    pat = jira_token or resolve_jira_pat_optional(None)
-    base_url = jira_url or resolve_jira_url(None)
-    if pat:
-        enrich_issues_with_pr_info(issues, all_raw_issues, base_url, pat)
+    # Enrich issues with PR info from dev-status API
+    # Only worthwhile if GitHub MCP is also configured (otherwise cycle_time_report can't use it)
+    github_mcp_available = False
+    mcp_cfg_path = find_mcp_config()
+    if mcp_cfg_path:
+        github_mcp_available = load_mcp_server_config(mcp_cfg_path, "github") is not None
+
+    if not github_mcp_available:
+        print("  Skipping PR link enrichment (no GitHub MCP configured).")
     else:
-        print("  Skipping PR link enrichment (no Jira PAT available).")
-        print("  Set JIRA_TOKEN env var or add to .env for PR cycle time support.")
+        pat = jira_token or resolve_jira_pat_optional(None)
+        base_url = jira_url or resolve_jira_url(None)
+        if pat:
+            enrich_issues_with_pr_info(issues, all_raw_issues, base_url, pat, sprint_start_date=start_date)
+        else:
+            print("  Skipping PR link enrichment (no Jira PAT available).")
+            print("  Set JIRA_TOKEN env var or add to .env for PR cycle time support.")
 
     _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
 
@@ -685,7 +712,15 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
 
-    enrich_issues_with_pr_info(issues, all_raw_issues, base_url, pat)
+    github_mcp_available = False
+    mcp_cfg_path = find_mcp_config()
+    if mcp_cfg_path:
+        github_mcp_available = load_mcp_server_config(mcp_cfg_path, "github") is not None
+
+    if github_mcp_available:
+        enrich_issues_with_pr_info(issues, all_raw_issues, base_url, pat, sprint_start_date=start_date)
+    else:
+        print("  Skipping PR link enrichment (no GitHub MCP configured).")
 
     _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
 
