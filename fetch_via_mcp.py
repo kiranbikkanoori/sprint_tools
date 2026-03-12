@@ -32,7 +32,6 @@ import json
 import os
 import re
 import sys
-import uuid
 from pathlib import Path
 
 import requests
@@ -41,6 +40,7 @@ from requests.auth import AuthBase
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
+from mcp_client import McpClient, find_mcp_config, load_mcp_server_config
 from utils import parse_jira_time_to_hours
 
 
@@ -55,87 +55,6 @@ SPRINT_FIELDS_MCP = (
     "resolutiondate,story_points,customfield_10344,customfield_10028,"
     "customfield_10016,customfield_10026,customfield_10004"
 )
-
-
-# ── MCP HTTP Client ─────────────────────────────────────────────────────────
-
-class McpClient:
-    """Minimal MCP-over-HTTP client for calling tools on a Streamable HTTP server."""
-
-    def __init__(self, url: str, headers: dict):
-        self.url = url.rstrip("/")
-        self.session = requests.Session()
-        self.session.headers["Content-Type"] = "application/json"
-        self.session.headers["Accept"] = "application/json, text/event-stream"
-        self.session.headers.update(headers)
-        self.session_id = None
-        self._initialize()
-
-    def _initialize(self):
-        resp = self._raw_post({
-            "jsonrpc": "2.0",
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "sprint-tools", "version": "1.0.0"},
-            },
-            "id": str(uuid.uuid4()),
-        })
-        if "Mcp-Session-Id" in resp.headers:
-            self.session_id = resp.headers["Mcp-Session-Id"]
-            self.session.headers["Mcp-Session-Id"] = self.session_id
-
-        self.session.post(self.url, json={
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-        }, timeout=15)
-
-    def _raw_post(self, body: dict) -> requests.Response:
-        resp = self.session.post(self.url, json=body, timeout=60)
-        resp.raise_for_status()
-        return resp
-
-    def call_tool(self, tool_name: str, arguments: dict) -> any:
-        body = {
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {"name": tool_name, "arguments": arguments},
-            "id": str(uuid.uuid4()),
-        }
-        resp = self._raw_post(body)
-        content_type = resp.headers.get("Content-Type", "")
-
-        if "text/event-stream" in content_type:
-            return self._parse_sse(resp.text)
-        else:
-            data = resp.json()
-            return self._extract_result(data)
-
-    def _parse_sse(self, text: str) -> any:
-        for line in text.splitlines():
-            if line.startswith("data: "):
-                try:
-                    data = json.loads(line[6:])
-                    result = self._extract_result(data)
-                    if result is not None:
-                        return result
-                except json.JSONDecodeError:
-                    continue
-        return None
-
-    def _extract_result(self, data: dict) -> any:
-        if "error" in data:
-            raise RuntimeError(f"MCP error: {data['error']}")
-        result = data.get("result", {})
-        content = result.get("content", [])
-        for item in content:
-            if item.get("type") == "text":
-                try:
-                    return json.loads(item["text"])
-                except (json.JSONDecodeError, TypeError):
-                    return item.get("text")
-        return result
 
 
 # ── Direct Jira REST Client ─────────────────────────────────────────────────
@@ -319,32 +238,9 @@ def convert_worklog_rest(wl: dict) -> dict:
 
 # ── MCP config loading ─────────────────────────────────────────────────────
 
-def find_mcp_config() -> Path | None:
-    candidates = [
-        Path.home() / ".cursor" / "mcp.json",
-        Path.cwd().parent / ".cursor" / "mcp.json",
-        Path.cwd() / ".cursor" / "mcp.json",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
-
-
 def load_jira_mcp_config(mcp_path: Path) -> tuple[str, dict] | None:
     """Extract Jira MCP server URL and headers from mcp.json. Returns None if not found."""
-    try:
-        data = json.loads(mcp_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-    servers = data.get("mcpServers", {})
-
-    for name, cfg in servers.items():
-        if "jira" in name.lower() and cfg.get("type") == "http":
-            url = cfg["url"]
-            headers = cfg.get("headers", {})
-            return url, headers
-    return None
+    return load_mcp_server_config(mcp_path, "jira")
 
 
 def extract_pat_from_mcp_config(mcp_path: Path) -> str | None:
@@ -422,6 +318,123 @@ def resolve_jira_pat(cli_arg: str | None) -> str:
         print("Error: no PAT provided.", file=sys.stderr)
         sys.exit(1)
     return pat
+
+
+# ── Dev-status (PR info from Jira) ──────────────────────────────────────────
+
+def _make_dev_status_session(base_url: str, pat: str) -> requests.Session:
+    """Create a requests session for the Jira dev-status REST API."""
+    session = requests.Session()
+    session.auth = BearerAuth(pat)
+    session.headers["Content-Type"] = "application/json"
+    session.base_url = base_url.rstrip("/")
+    return session
+
+
+def fetch_dev_status_prs(base_url: str, pat: str, issue_id: str) -> list[dict]:
+    """
+    Call Jira's dev-status detail API to get linked GitHub PRs for an issue.
+    Returns a list of dicts with keys: number, repo, branch, url, status.
+    Returns [] on any failure.
+    """
+    try:
+        url = f"{base_url.rstrip('/')}/rest/dev-status/latest/issue/detail"
+        resp = requests.get(
+            url,
+            params={"issueId": issue_id, "applicationType": "github", "dataType": "pullrequest"},
+            auth=BearerAuth(pat),
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except Exception:
+        return []
+
+    prs: list[dict] = []
+    for detail in data.get("detail", []):
+        for pr in detail.get("pullRequests", []):
+            pr_url = pr.get("url", "")
+            repo_full = ""
+            pr_number = 0
+            # Parse PR URL: https://github.com/OWNER/REPO/pull/123
+            if "github.com" in pr_url:
+                parts = pr_url.rstrip("/").split("/")
+                try:
+                    pull_idx = parts.index("pull")
+                    pr_number = int(parts[pull_idx + 1])
+                    repo_full = f"{parts[pull_idx - 2]}/{parts[pull_idx - 1]}"
+                except (ValueError, IndexError):
+                    pass
+
+            prs.append({
+                "number": pr_number,
+                "repo": repo_full,
+                "branch": pr.get("source", {}).get("branch", ""),
+                "url": pr_url,
+                "status": pr.get("status", ""),
+            })
+    return prs
+
+
+def enrich_issues_with_pr_info(
+    issues: list[dict],
+    raw_issues: list[dict],
+    jira_base_url: str,
+    jira_pat: str,
+) -> None:
+    """
+    For each issue, call the dev-status API to get linked PRs and
+    add a ``pull_requests`` field to the issue dict (in-place).
+
+    *raw_issues* are the original Jira API response objects containing the
+    issue ID (the ``"id"`` field, present in both MCP and REST responses).
+    """
+    raw_by_key = {r.get("key", r.get("id")): r for r in raw_issues}
+
+    print(f"Fetching PR links from Jira dev-status...", end="", flush=True)
+    fetched = 0
+    for issue in issues:
+        key = issue["key"]
+        raw = raw_by_key.get(key, {})
+        issue_id = str(raw.get("id", ""))
+        if not issue_id:
+            issue["pull_requests"] = []
+            continue
+        prs = fetch_dev_status_prs(jira_base_url, jira_pat, issue_id)
+        issue["pull_requests"] = prs
+        fetched += 1
+        if fetched % 5 == 0:
+            print(f" {fetched}/{len(issues)}", end="", flush=True)
+    print(" done.")
+    pr_total = sum(len(i.get("pull_requests", [])) for i in issues)
+    print(f"  PR links found: {pr_total} across {len(issues)} issues")
+
+
+def resolve_jira_pat_optional(cli_arg: str | None) -> str | None:
+    """
+    Try to resolve a Jira PAT silently (no interactive prompt).
+    Returns the PAT string or None if unavailable.
+    """
+    if cli_arg:
+        return cli_arg
+
+    script_dir = Path(__file__).resolve().parent
+    load_env_file(script_dir / ".env")
+    load_env_file(script_dir.parent / ".env")
+
+    token = os.environ.get("JIRA_TOKEN")
+    if token:
+        return token
+
+    mcp_path = find_mcp_config()
+    if mcp_path:
+        pat = extract_pat_from_mcp_config(mcp_path)
+        if pat:
+            return pat
+
+    return None
 
 
 # ── Sprint search (MCP) ────────────────────────────────────────────────────
@@ -551,7 +564,10 @@ def _print_sprint_not_found(sprint_name: str, board_id, all_found: list):
 
 # ── Fetch via MCP ───────────────────────────────────────────────────────────
 
-def fetch_via_mcp(mcp_url: str, mcp_headers: dict, sprint_name: str, board_id: int | None, output_path: Path):
+def fetch_via_mcp(
+    mcp_url: str, mcp_headers: dict, sprint_name: str, board_id: int | None,
+    output_path: Path, jira_url: str | None = None, jira_token: str | None = None,
+):
     """Fetch sprint data using the MCP gateway."""
     print("Connecting to MCP gateway...")
     client = McpClient(mcp_url, mcp_headers)
@@ -613,6 +629,15 @@ def fetch_via_mcp(mcp_url: str, mcp_headers: dict, sprint_name: str, board_id: i
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
 
+    # Enrich issues with PR info from dev-status API (requires Jira PAT)
+    pat = jira_token or resolve_jira_pat_optional(None)
+    base_url = jira_url or resolve_jira_url(None)
+    if pat:
+        enrich_issues_with_pr_info(issues, all_raw_issues, base_url, pat)
+    else:
+        print("  Skipping PR link enrichment (no Jira PAT available).")
+        print("  Set JIRA_TOKEN env var or add to .env for PR cycle time support.")
+
     _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
 
 
@@ -659,6 +684,8 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
         if (idx + 1) % 5 == 0:
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
+
+    enrich_issues_with_pr_info(issues, all_raw_issues, base_url, pat)
 
     _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
 
@@ -719,7 +746,10 @@ def main():
                 mcp_url, mcp_headers = mcp_result
                 print(f"Mode: MCP gateway ({mcp_url})")
                 try:
-                    fetch_via_mcp(mcp_url, mcp_headers, sprint_name, args.board_id, output_path)
+                    fetch_via_mcp(
+                        mcp_url, mcp_headers, sprint_name, args.board_id, output_path,
+                        jira_url=args.jira_url, jira_token=args.jira_token,
+                    )
                     return
                 except Exception as e:
                     print(f"\nMCP gateway failed: {e}", file=sys.stderr)

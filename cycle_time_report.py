@@ -10,12 +10,16 @@ Metrics per PR:
   - Review Time:  First human review → PR merge
   - Cycle Time:   First commit → PR merge (end-to-end)
 
+Data is fetched via the GitHub MCP server configured in ~/.cursor/mcp.json.
+If the MCP server is not configured or unreachable, the script exits gracefully.
+
 Usage:
+    # PR info comes from Jira dev-status (embedded in sprint data JSON)
     python cycle_time_report.py \\
         --data sprint_data_Wi-Fi_LMAC_2026_5.json \\
-        --config sprint_report_config.md \\
-        --repo SiliconLabsInternal/wifi-nwp-firmware
+        --config sprint_report_config.md
 
+    # Fallback: search GitHub if no PR info in sprint data
     python cycle_time_report.py \\
         --data sprint_data.json --config config.md \\
         --repo OWNER/REPO --output-dir ./output
@@ -25,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -35,6 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
+from mcp_client import McpClient, find_mcp_config, load_mcp_server_config
 
 BOT_LOGINS = {
     "siliconlabs-read-all-repos[bot]",
@@ -42,6 +46,7 @@ BOT_LOGINS = {
     "dependabot[bot]",
     "github-actions[bot]",
     "codecov[bot]",
+    "copilot-pull-request-reviewer[bot]",
 }
 
 
@@ -115,20 +120,9 @@ class PRMetrics:
         return None
 
 
-# ── GitHub CLI helpers ───────────────────────────────────────────────────────
+# ── GitHub MCP helpers ───────────────────────────────────────────────────────
 
-def run_gh(args: list[str], timeout: int = 30) -> str:
-    cmd = ["gh"] + args
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if result.returncode != 0:
-            return ""
-        return result.stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return ""
-
-
-def parse_iso(dt_str: str) -> datetime | None:
+def _parse_iso(dt_str: str) -> datetime | None:
     if not dt_str:
         return None
     try:
@@ -137,75 +131,129 @@ def parse_iso(dt_str: str) -> datetime | None:
         return None
 
 
-def find_prs_for_ticket(repo: str, ticket_key: str) -> list[dict]:
-    output = run_gh([
-        "pr", "list", "--repo", repo,
-        "--search", ticket_key,
-        "--state", "all",
-        "--json", "number,title,author,createdAt,mergedAt,state,headRefName,additions,deletions,changedFiles,url",
-        "--limit", "10",
-    ])
-    if not output:
+def _split_repo(repo: str) -> tuple[str, str]:
+    owner, _, name = repo.partition("/")
+    return owner, name
+
+
+def _fallback_search_prs(client: McpClient, repo: str, ticket_key: str) -> list[dict]:
+    """
+    Fallback: search GitHub for PRs matching a ticket key (title/body only).
+    Used when sprint data has no pull_requests field (no Jira PAT was available).
+    """
+    if not repo:
         return []
+    owner, repo_name = _split_repo(repo)
     try:
-        prs = json.loads(output)
-        return [
-            pr for pr in prs
-            if ticket_key.lower() in pr.get("headRefName", "").lower()
-            or ticket_key.lower() in pr.get("title", "").lower()
-        ]
-    except json.JSONDecodeError:
+        result = client.call_tool("search_pull_requests", {
+            "query": ticket_key,
+            "owner": owner,
+            "repo": repo_name,
+            "perPage": 10,
+        })
+    except Exception:
         return []
 
+    items = result.get("items", []) if isinstance(result, dict) else []
+    return [
+        {"number": item.get("number"), "repo": repo, "branch": "", "url": item.get("html_url", ""), "status": ""}
+        for item in items
+        if item.get("number")
+    ]
 
-def get_pr_commits(repo: str, pr_number: int) -> list[dict]:
-    output = run_gh(["api", f"repos/{repo}/pulls/{pr_number}/commits", "--paginate"], timeout=30)
-    if not output:
-        return []
+
+def get_pr_details(client: McpClient, owner: str, repo: str, pr_number: int) -> dict | None:
+    """Fetch full PR details (created_at, merged_at, head SHA, stats, etc.)."""
     try:
-        return json.loads(output)
-    except json.JSONDecodeError:
-        return []
+        return client.call_tool("pull_request_read", {
+            "method": "get",
+            "owner": owner,
+            "repo": repo,
+            "pullNumber": pr_number,
+        })
+    except Exception:
+        return None
 
 
-def get_pr_reviews(repo: str, pr_number: int) -> list[dict]:
-    output = run_gh(["api", f"repos/{repo}/pulls/{pr_number}/reviews"], timeout=30)
-    if not output:
-        return []
+def get_pr_reviews(client: McpClient, owner: str, repo: str, pr_number: int) -> list[dict]:
+    """Fetch review records for a PR."""
     try:
-        return json.loads(output)
-    except json.JSONDecodeError:
+        result = client.call_tool("pull_request_read", {
+            "method": "get_reviews",
+            "owner": owner,
+            "repo": repo,
+            "pullNumber": pr_number,
+        })
+        return result if isinstance(result, list) else []
+    except Exception:
         return []
 
 
-def analyze_pr(repo: str, pr_data: dict, ticket_key: str, assignee: str) -> PRMetrics:
-    pr_num = pr_data["number"]
+def get_pr_first_commit_date(
+    client: McpClient, owner: str, repo: str, head_sha: str, commit_count: int,
+) -> datetime | None:
+    """
+    Approximate the date of the first PR commit by listing commits from the
+    head SHA and taking the earliest among the first *commit_count* entries.
+    """
+    if not head_sha or commit_count <= 0:
+        return None
+    try:
+        commits = client.call_tool("list_commits", {
+            "owner": owner,
+            "repo": repo,
+            "sha": head_sha,
+            "perPage": min(commit_count, 100),
+        })
+    except Exception:
+        return None
+
+    if not isinstance(commits, list):
+        return None
+
+    pr_commits = commits[:commit_count]
+    dates = []
+    for c in pr_commits:
+        dt = _parse_iso(c.get("commit", {}).get("author", {}).get("date", ""))
+        if dt:
+            dates.append(dt)
+    return min(dates) if dates else None
+
+
+def analyze_pr(
+    client: McpClient, owner: str, repo: str,
+    pr_number: int, ticket_key: str, assignee: str,
+) -> PRMetrics | None:
+    """Fetch full PR details and reviews by exact PR number, return PRMetrics."""
+    details = get_pr_details(client, owner, repo, pr_number)
+    if not details or not isinstance(details, dict):
+        return None
+
+    state = "MERGED" if details.get("merged") else details.get("state", "").upper()
+
     metrics = PRMetrics(
-        pr_number=pr_num,
-        title=pr_data.get("title", ""),
-        url=pr_data.get("url", f"https://github.com/{repo}/pull/{pr_num}"),
-        author=pr_data.get("author", {}).get("login", "unknown"),
-        state=pr_data.get("state", ""),
+        pr_number=pr_number,
+        title=details.get("title", ""),
+        url=details.get("html_url", f"https://github.com/{owner}/{repo}/pull/{pr_number}"),
+        author=details.get("user", {}).get("login", "unknown"),
+        state=state,
         jira_key=ticket_key,
         assignee=assignee,
-        created_at=parse_iso(pr_data.get("createdAt", "")),
-        merged_at=parse_iso(pr_data.get("mergedAt", "")),
-        additions=pr_data.get("additions", 0),
-        deletions=pr_data.get("deletions", 0),
-        changed_files=pr_data.get("changedFiles", 0),
+        created_at=_parse_iso(details.get("created_at", "")),
+        merged_at=_parse_iso(details.get("merged_at", "")),
+        additions=details.get("additions", 0),
+        deletions=details.get("deletions", 0),
+        changed_files=details.get("changed_files", 0),
+        total_commits=details.get("commits", 0),
     )
 
-    commits = get_pr_commits(repo, pr_num)
-    metrics.total_commits = len(commits)
-    commit_dates = []
-    for c in commits:
-        dt = parse_iso(c.get("commit", {}).get("author", {}).get("date", ""))
-        if dt:
-            commit_dates.append(dt)
-    if commit_dates:
-        metrics.first_commit_at = min(commit_dates)
+    head_sha = details.get("head", {}).get("sha", "")
+    commit_count = details.get("commits", 0)
+    metrics.first_commit_at = get_pr_first_commit_date(
+        client, owner, repo, head_sha, commit_count,
+    )
 
-    reviews = get_pr_reviews(repo, pr_num)
+    reviews = get_pr_reviews(client, owner, repo, pr_number)
     human_reviews = [
         r for r in reviews
         if r.get("user", {}).get("login", "") not in BOT_LOGINS
@@ -219,7 +267,7 @@ def analyze_pr(repo: str, pr_data: dict, ticket_key: str, assignee: str) -> PRMe
 
     review_dates = []
     for r in human_reviews:
-        dt = parse_iso(r.get("submitted_at", ""))
+        dt = _parse_iso(r.get("submitted_at", ""))
         if dt:
             review_dates.append(dt)
     if review_dates:
@@ -426,8 +474,9 @@ def main():
     parser = argparse.ArgumentParser(description="Generate PR cycle time report for sprint tickets.")
     parser.add_argument("--data", "-d", required=True, help="Sprint data JSON (from fetch_via_mcp.py)")
     parser.add_argument("--config", "-c", required=True, help="Sprint report config markdown")
-    parser.add_argument("--repo", "-r", required=True, help="GitHub repo (OWNER/REPO)")
+    parser.add_argument("--repo", "-r", default="", help="GitHub repo (OWNER/REPO) — optional if sprint data has PR info from Jira")
     parser.add_argument("--output-dir", "-o", default="./output", help="Output directory")
+    parser.add_argument("--mcp-config", default=None, help="Path to mcp.json (auto-detected if omitted)")
     args = parser.parse_args()
 
     data_path = Path(args.data)
@@ -435,60 +484,99 @@ def main():
         print(f"Error: data file not found: {data_path}", file=sys.stderr)
         sys.exit(1)
 
+    # ── Connect to GitHub MCP ────────────────────────────────────────────
+    mcp_path = Path(args.mcp_config) if args.mcp_config else find_mcp_config()
+    if not mcp_path or not mcp_path.exists():
+        print("GitHub MCP: mcp.json not found — skipping PR cycle time.", file=sys.stderr)
+        sys.exit(0)
+
+    mcp_cfg = load_mcp_server_config(mcp_path, "github")
+    if not mcp_cfg:
+        print("GitHub MCP: no github server in mcp.json — skipping PR cycle time.", file=sys.stderr)
+        sys.exit(0)
+
+    mcp_url, mcp_headers = mcp_cfg
+    try:
+        print(f"GitHub MCP: connecting to {mcp_url}")
+        client = McpClient(mcp_url, mcp_headers)
+        print("GitHub MCP: connected.")
+    except Exception as exc:
+        print(f"GitHub MCP: connection failed ({exc}) — skipping PR cycle time.", file=sys.stderr)
+        sys.exit(0)
+
+    # ── Load sprint data and config ──────────────────────────────────────
     with open(data_path) as f:
         sprint_data = json.load(f)
 
     config = parse_config(args.config)
     sprint_name = sprint_data.get("sprint", {}).get("name", config.sprint_name)
     issues = sprint_data.get("issues", [])
-    repo = args.repo
+    repo_display = args.repo or "(from Jira dev-status)"
 
     tickets = [i for i in issues if i.get("type") != "Parent"]
 
+    has_pr_info = any(t.get("pull_requests") is not None for t in tickets)
+
     print(f"Sprint:  {sprint_name}")
-    print(f"Repo:    {repo}")
+    print(f"Repo:    {repo_display}")
     print(f"Tickets: {len(tickets)} (excluding parent stories)")
+    print(f"PR source: {'Jira dev-status' if has_pr_info else 'GitHub search (fallback)'}")
     print()
 
-    auth_out = run_gh(["auth", "token"], timeout=10)
-    if not auth_out.strip():
-        print("Error: gh CLI not authenticated. Run: gh auth login", file=sys.stderr)
-        sys.exit(1)
+    if not has_pr_info and not args.repo:
+        print("No PR info in sprint data and no --repo specified.", file=sys.stderr)
+        print("Re-run fetch_via_mcp.py with JIRA_TOKEN set, or pass --repo OWNER/REPO.", file=sys.stderr)
+        sys.exit(0)
 
     all_metrics: list[PRMetrics] = []
     tickets_without_pr: list[dict] = []
-    seen_prs: set[int] = set()
+    seen_prs: set[str] = set()
 
     for idx, ticket in enumerate(tickets):
         key = ticket["key"]
         assignee = ticket.get("assignee", "Unassigned")
         print(f"  [{idx + 1}/{len(tickets)}] {key:15s} ({assignee:25s}) ", end="", flush=True)
 
-        prs = find_prs_for_ticket(repo, key)
+        pr_list = ticket.get("pull_requests", [])
 
-        if not prs:
-            print("— no PR")
-            tickets_without_pr.append(ticket)
-            continue
+        if not pr_list:
+            if has_pr_info:
+                print("— no PR")
+                tickets_without_pr.append(ticket)
+                continue
+            # Fallback: search GitHub if no dev-status data
+            pr_list = _fallback_search_prs(client, args.repo, key)
+            if not pr_list:
+                print("— no PR")
+                tickets_without_pr.append(ticket)
+                continue
 
-        for pr_data in prs:
-            pr_num = pr_data["number"]
-            if pr_num in seen_prs:
+        for pr_info in pr_list:
+            pr_num = pr_info.get("number", 0)
+            pr_repo = pr_info.get("repo", args.repo)
+            if not pr_num or not pr_repo:
+                continue
+            dedup_key = f"{pr_repo}#{pr_num}"
+            if dedup_key in seen_prs:
                 print(f"— PR #{pr_num} (dup, skipped)")
                 continue
-            seen_prs.add(pr_num)
-            print(f"→ PR #{pr_num} ", end="", flush=True)
-            metrics = analyze_pr(repo, pr_data, key, assignee)
-            all_metrics.append(metrics)
-            print(f"[coding={fmt(metrics.coding_time_hours)} pickup={fmt(metrics.pickup_time_hours)} "
-                  f"review={fmt(metrics.review_time_hours)}]")
+            seen_prs.add(dedup_key)
+            pr_owner, pr_repo_name = _split_repo(pr_repo)
+            print(f"→ {pr_repo}#{pr_num} ", end="", flush=True)
+            metrics = analyze_pr(client, pr_owner, pr_repo_name, pr_num, key, assignee)
+            if metrics:
+                all_metrics.append(metrics)
+                print(f"[coding={fmt(metrics.coding_time_hours)} pickup={fmt(metrics.pickup_time_hours)} "
+                      f"review={fmt(metrics.review_time_hours)}]")
+            else:
+                print("[failed to fetch details]")
 
     print()
     print(f"PRs analyzed:       {len(all_metrics)}")
     print(f"Tickets without PR: {len(tickets_without_pr)}")
     print()
 
-    report = generate_report(all_metrics, config.team_members, sprint_name, repo, tickets_without_pr)
+    report = generate_report(all_metrics, config.team_members, sprint_name, repo_display, tickets_without_pr)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

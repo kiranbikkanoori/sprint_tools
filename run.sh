@@ -162,33 +162,19 @@ else
     echo ""
 fi
 
-# ── Step 2: PR Cycle Time analysis ──────────────────────────────────────────
+# ── Step 2: PR Cycle Time analysis (via GitHub MCP) ─────────────────────────
 CYCLE_TIME_JSON=""
-if [[ "$FETCH_ONLY" == false && "$SKIP_CYCLE_TIME" == false && -n "$GH_REPO" ]]; then
-    echo "── Step 2: Generating PR cycle time data ──"
+if [[ "$FETCH_ONLY" == false && "$SKIP_CYCLE_TIME" == false ]]; then
+    echo "── Step 2: Generating PR cycle time data (via GitHub MCP) ──"
 
     CYCLE_TIME_JSON="$OUTPUT_DIR/cycle_time_data_${SAFE_NAME}.json"
 
-    if ! command -v gh &>/dev/null; then
-        echo "  Note: 'gh' CLI not installed — cycle time section will show as unavailable."
-        echo "  To enable: install from https://cli.github.com/ and run 'gh auth login'"
-        echo ""
-    elif ! gh auth token &>/dev/null 2>&1; then
-        echo "  Note: 'gh' CLI not authenticated — cycle time section will show as unavailable."
-        echo "  To enable: run 'gh auth login'"
-        echo ""
-    else
-        mkdir -p "$OUTPUT_DIR"
-        python3 cycle_time_report.py \
-            --data "$DATA_FILE" \
-            --config "$CONFIG" \
-            --repo "$GH_REPO" \
-            --output-dir "$OUTPUT_DIR"
-        echo ""
-    fi
-elif [[ "$FETCH_ONLY" == false && "$SKIP_CYCLE_TIME" == false && -z "$GH_REPO" ]]; then
-    echo "── Step 2: Skipped (no GitHub repo configured) ──"
-    echo "  Set 'GitHub Repo' in $CONFIG or use --gh-repo OWNER/REPO"
+    mkdir -p "$OUTPUT_DIR"
+    CYCLE_ARGS=(--data "$DATA_FILE" --config "$CONFIG" --output-dir "$OUTPUT_DIR")
+    [[ -n "$GH_REPO" ]] && CYCLE_ARGS+=(--repo "$GH_REPO")
+    [[ -n "$MCP_CONFIG" ]] && CYCLE_ARGS+=(--mcp-config "$MCP_CONFIG")
+
+    python3 cycle_time_report.py "${CYCLE_ARGS[@]}"
     echo ""
 else
     echo "── Step 2: Skipped ──"
