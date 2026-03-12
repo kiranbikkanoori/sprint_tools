@@ -397,26 +397,27 @@ def generate_text_report(
 
     for pr in person_reports:
         p_completed = [tk for tk in pr.tickets if tk.status_category == "Done"]
-        p_committed_count = len(pr.tickets)
-        p_completed_count = len(p_completed)
-        p_rate = (p_completed_count / p_committed_count * 100) if p_committed_count else 0
 
         if has_story_points:
             p_sp_c = sum(tk.story_points for tk in pr.tickets if tk.story_points is not None)
             p_sp_d = sum(tk.story_points for tk in p_completed if tk.story_points is not None)
             p_vel = (p_sp_d / pr.capacity_days) if pr.capacity_days else 0
-            ln(f"| {pr.name} | {pr.capacity_days:.0f} | {p_sp_c:.0f} | {p_sp_d:.0f} | {p_vel:.2f} | {p_completed_count}/{p_committed_count} ({p_rate:.0f}%) |")
+            p_rate = (p_sp_d / p_sp_c * 100) if p_sp_c else 0
+            ln(f"| {pr.name} | {pr.capacity_days:.0f} | {p_sp_c:.0f} | {p_sp_d:.0f} | {p_vel:.2f} | {p_sp_d:.0f}/{p_sp_c:.0f} ({p_rate:.0f}%) |")
         else:
             p_h_c = sum(tk.estimate_hours for tk in pr.tickets)
             p_h_d = sum(tk.estimate_hours for tk in p_completed)
             p_vel = (p_h_d / pr.capacity_days) if pr.capacity_days else 0
-            ln(f"| {pr.name} | {pr.capacity_days:.0f} | {p_h_c:.0f}h | {p_h_d:.0f}h | {p_vel:.1f} | {p_completed_count}/{p_committed_count} ({p_rate:.0f}%) |")
+            p_rate = (p_h_d / p_h_c * 100) if p_h_c else 0
+            ln(f"| {pr.name} | {pr.capacity_days:.0f} | {p_h_c:.0f}h | {p_h_d:.0f}h | {p_vel:.1f} | {p_h_d:.0f}h/{p_h_c:.0f}h ({p_rate:.0f}%) |")
 
     team_vel = vel
     if has_story_points:
-        ln(f"| **TEAM** | **{total_man_days:.0f}** | **{sp_committed:.0f}** | **{sp_completed:.0f}** | **{team_vel:.2f}** | **{completed_count}/{committed} ({completion_rate:.0f}%)** |")
+        sp_rate = (sp_completed / sp_committed * 100) if sp_committed else 0
+        ln(f"| **TEAM** | **{total_man_days:.0f}** | **{sp_committed:.0f}** | **{sp_completed:.0f}** | **{team_vel:.2f}** | **{sp_completed:.0f}/{sp_committed:.0f} ({sp_rate:.0f}%)** |")
     else:
-        ln(f"| **TEAM** | **{total_man_days:.0f}** | **{hours_committed:.0f}h** | **{hours_completed:.0f}h** | **{team_vel:.1f}** | **{completed_count}/{committed} ({completion_rate:.0f}%)** |")
+        h_rate = (hours_completed / hours_committed * 100) if hours_committed else 0
+        ln(f"| **TEAM** | **{total_man_days:.0f}** | **{hours_committed:.0f}h** | **{hours_completed:.0f}h** | **{team_vel:.1f}** | **{hours_completed:.0f}h/{hours_committed:.0f}h ({h_rate:.0f}%)** |")
     ln()
 
     # ── Carried-over closed tickets (for info only) ──────────────────────
