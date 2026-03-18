@@ -92,6 +92,7 @@ def convert_issue(raw: dict) -> dict:
     """
     tt = raw.get("timetracking", {}) or {}
     est_raw = tt.get("original_estimate", "0") or "0"
+    rem_raw = tt.get("remaining_estimate", "0") or "0"
     assignee_obj = raw.get("assignee") or {}
 
     return {
@@ -103,6 +104,8 @@ def convert_issue(raw: dict) -> dict:
         "assignee": assignee_obj.get("display_name", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
+        "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
+        "remaining_estimate_raw": rem_raw,
         "parent_key": (raw.get("parent") or {}).get("key"),
     }
 
