@@ -8,7 +8,6 @@ Fill in the sections below and share this file with the AI assistant to generate
 
 - **Sprint Name**: `Wi-Fi_LMAC_2026_5`
 - **Sprint Duration (weeks)**: `2`
-- **GitHub Repo**: `SiliconLabsInternal/wifi-nwp-firmware`
 
 ---
 
@@ -83,7 +82,6 @@ Tickets in the sprint that should NOT be counted (e.g., tracking/umbrella ticket
 - **Exclude parent story estimates** (avoid double-counting with sub-tasks): `Yes`
 - **Show per-ticket worklog details**: `Yes`
 - **Show daily log gaps** (flag people who haven't logged work on a given day): `Yes`
-- **Generate PR cycle time report**: `Yes`
 
 ---
 

@@ -33,7 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
-from report_generator import build_person_reports, generate_text_report, generate_cycle_time_section
+from report_generator import build_person_reports, generate_text_report
 from report_format import generate_report_format
 from utils import working_days_in_range
 
@@ -80,16 +80,6 @@ def main():
     parser.add_argument(
         "--chart-only", action="store_true",
         help="Generate only the burndown chart (skip report)",
-    )
-    parser.add_argument(
-        "--cycle-time-data",
-        default=None,
-        help="Path to cycle_time_data_*.json (appends cycle time section to report)",
-    )
-    parser.add_argument(
-        "--gh-repo",
-        default=None,
-        help="GitHub repo name for display in cycle time section",
     )
     parser.add_argument(
         "--generate-format", action="store_true",
@@ -141,8 +131,9 @@ def main():
     if carried_over:
         print(f"Excluded {len(carried_over)} ticket(s) closed before sprint start.")
 
-    # ── Total planned hours (for burndown) ───────────────────────────────
+    # ── Totals for burndown ──────────────────────────────────────────────
     total_planned = sum(pr.total_planned_hours for pr in person_reports)
+    total_remaining = sum(pr.total_remaining_hours for pr in person_reports)
 
     safe_name = config.sprint_name.replace(" ", "_")
 
@@ -153,25 +144,6 @@ def main():
             person_reports, len(issues), parent_count, sprint_goal,
             carried_over=carried_over,
         )
-
-        ct_path = args.cycle_time_data
-        if ct_path and Path(ct_path).exists():
-            with open(ct_path, encoding="utf-8") as f:
-                ct_data = json.load(f)
-            report_text += "\n" + generate_cycle_time_section(
-                ct_data, repo=args.gh_repo or ""
-            )
-            print(f"Cycle time data included from: {ct_path}")
-        elif ct_path:
-            report_text += (
-                "\n---\n"
-                "## PR Cycle Time\n\n"
-                "_Cycle time data was not generated._ "
-                "This section requires the GitHub CLI (`gh`) to be installed and authenticated.\n\n"
-                "To enable: `gh auth login`  \n"
-                "To suppress this note: use `--skip-cycle-time`\n"
-            )
-            print("Cycle time data file not found — section shows as unavailable.")
 
         report_path = output_dir / f"sprint_report_{safe_name}.md"
         report_path.write_text(report_text, encoding="utf-8")
@@ -201,6 +173,7 @@ def main():
             member_names=included_names,
             worklogs=chart_worklogs,
             report_date=report_date,
+            total_remaining_hours=total_remaining,
             output_path=chart_path,
         )
         print(f"Burndown chart saved to: {chart_path}")

@@ -74,6 +74,7 @@ def generate_burndown_chart(
     member_names: list[str],
     worklogs: dict[str, list[dict]],
     report_date: date | None = None,
+    total_remaining_hours: float | None = None,
     output_path: str | Path = "sprint_burndown.png",
 ) -> Path:
     """
@@ -104,8 +105,6 @@ def generate_burndown_chart(
                 continue
             if not (sprint_start <= wl_date <= sprint_end):
                 continue
-            if wl_date.weekday() >= 5:
-                continue
             hrs = wl["seconds"] / 3600.0
             member_daily[author][wl_date] += hrs
             team_daily[wl_date] += hrs
@@ -116,15 +115,25 @@ def generate_burndown_chart(
     ideal_x = list(range(-1, n_days))  # -1 = "Day 0" (start)
 
     # ── Actual burndown ──────────────────────────────────────────────────
+    # Include ALL worklogs (including weekends) so remaining matches Planned vs Logged table.
+    # Use Jira's total_remaining_hours for the final point when available (actual state from Jira).
+    all_dates = []
+    d = sprint_start
+    while d <= sprint_end:
+        all_dates.append(d)
+        d += timedelta(days=1)
     actual_x = [-1]
     actual_y = [total_planned_hours]
-    cumulative = 0.0
-    for i, d in enumerate(working_days):
-        if d > report_date:
+    for i, wd in enumerate(working_days):
+        if wd > report_date:
             break
-        cumulative += team_daily.get(d, 0)
+        cum_at_wd = sum(team_daily.get(d, 0) for d in all_dates if d <= wd and d <= report_date)
         actual_x.append(i)
-        actual_y.append(total_planned_hours - cumulative)
+        actual_y.append(total_planned_hours - cum_at_wd)
+
+    # Use Jira's total remaining for the final point when available (actual state from Jira)
+    if total_remaining_hours is not None and len(actual_y) > 1:
+        actual_y[-1] = total_remaining_hours
 
     # Find "today" index for a vertical marker
     today_idx = None

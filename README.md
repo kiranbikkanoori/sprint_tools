@@ -1,7 +1,6 @@
 # Sprint Report Tools
 
-Generate sprint reports (markdown), burndown charts (PNG), and PR cycle time
-analysis from Jira and GitHub data.
+Generate sprint reports (markdown) and burndown charts (PNG) from Jira data.
 
 ---
 
@@ -83,32 +82,6 @@ for k, v in d.get('mcpServers', {}).items():
 "
 ```
 
-### 4. GitHub CLI (optional — for PR cycle time report)
-
-The PR cycle time section is **fully optional**. If `gh` is not installed or not
-authenticated, all other report sections (capacity, velocity, burndown, etc.) still
-work normally. The report will include a note that cycle time data is unavailable.
-
-To enable cycle time analysis:
-
-```bash
-# Install (Linux/Debian/Ubuntu)
-sudo apt install gh
-# Or download from https://cli.github.com/
-
-# Authenticate
-gh auth login
-# Choose: GitHub.com → HTTPS → Login with a web browser
-
-# Verify
-gh auth status
-```
-
-To explicitly suppress the "unavailable" note in the report:
-```bash
-./run.sh --skip-cycle-time
-```
-
 ---
 
 ## Quick Start
@@ -116,7 +89,7 @@ To explicitly suppress the "unavailable" note in the report:
 ```bash
 cd sprint_tools
 
-# Full run: fetch Jira data + generate report + burndown chart + cycle time
+# Full run: fetch Jira data + generate report + burndown chart
 ./run.sh
 
 # Or with a known board ID (faster, skips board search)
@@ -126,7 +99,6 @@ cd sprint_tools
 Output files appear in `./output/`:
 - `sprint_report_<name>.md` — full text report
 - `sprint_burndown_<name>.png` — burndown chart
-- `cycle_time_data_<name>.json` — raw PR metrics (if cycle time enabled)
 
 ---
 
@@ -140,7 +112,6 @@ Edit this file before each sprint. Below is a field-by-field guide.
 |-------|--------|---------|-------|
 | **Sprint Name** | Backtick-wrapped string | `` `Wi-Fi_LMAC_2026_5` `` | Must match the Jira sprint name **exactly** (case-sensitive). The script uses this to find the sprint. |
 | **Sprint Duration (weeks)** | Number | `` `2` `` | Used for capacity calculation (working days = weeks × 5). |
-| **GitHub Repo** | `Owner/RepoName` | `` `SiliconLabsInternal/wifi-nwp-firmware` `` | Required for PR cycle time report. Leave empty to skip. |
 
 ### Team Members
 
@@ -221,7 +192,6 @@ Tickets **in** the sprint that should be ignored (umbrella/tracking tickets, dup
 | **Exclude parent story estimates** | `Yes` / `No` | `Yes` | Prevents double-counting when parent stories have estimates that duplicate sub-task totals. |
 | **Show per-ticket worklog details** | `Yes` / `No` | `Yes` | Includes the per-ticket breakdown table for each person. |
 | **Show daily log gaps** | `Yes` / `No` | `Yes` | Shows days where a team member logged zero hours. |
-| **Generate PR cycle time report** | `Yes` / `No` | `Yes` | Enables GitHub PR analysis. Requires `gh` CLI and GitHub Repo to be set. |
 
 ### Sprint Metrics Definitions
 
@@ -247,20 +217,13 @@ Typically you only need to update these fields:
 ./run.sh
 ```
 
-This runs three steps:
+This runs two steps:
 1. **Fetch data from Jira** — connects via MCP gateway (or falls back to direct REST API)
-2. **PR cycle time analysis** — queries GitHub for PR metrics (if `gh` is set up)
-3. **Generate report + chart** — produces the markdown report and burndown PNG
+2. **Generate report + chart** — produces the markdown report and burndown PNG
 
 ### Common Options
 
 ```bash
-# Override GitHub repo from command line
-./run.sh --gh-repo SiliconLabsInternal/wifi-nwp-firmware
-
-# Skip cycle time report (no GitHub needed)
-./run.sh --skip-cycle-time
-
 # Force direct REST API (no Cursor/MCP needed)
 ./run.sh --no-mcp
 
@@ -297,20 +260,11 @@ python3 fetch_via_mcp.py --config sprint_report_config.md --board-id 1325
 # Step 1 (alt): Force direct REST API
 python3 fetch_via_mcp.py --config sprint_report_config.md --no-mcp --board-id 1325
 
-# Step 2: Generate cycle time data (optional)
-python3 cycle_time_report.py \
-  --data sprint_data_Wi-Fi_LMAC_2026_5.json \
-  --config sprint_report_config.md \
-  --repo SiliconLabsInternal/wifi-nwp-firmware \
-  --output-dir ./output
-
-# Step 3: Generate report + chart
+# Step 2: Generate report + chart
 python3 sprint_report.py \
   --config sprint_report_config.md \
   --data sprint_data_Wi-Fi_LMAC_2026_5.json \
-  --output-dir ./output \
-  --cycle-time-data ./output/cycle_time_data_Wi-Fi_LMAC_2026_5.json \
-  --gh-repo SiliconLabsInternal/wifi-nwp-firmware
+  --output-dir ./output
 
 # Report only (no chart, no matplotlib needed)
 python3 sprint_report.py -c sprint_report_config.md -d sprint_data_*.json --report-only
@@ -330,8 +284,6 @@ You can also use the Cursor AI assistant to run the tools:
 - **Mid-sprint check**: "Generate a sprint report as of Mar 10 using the config"
 - **Check today's logs**: "Using `sprint_report_config.md`, who hasn't logged work today?"
 - **Specific person**: "Show me Kiran's planned vs logged from the config"
-- **Cycle time only**: "Generate the PR cycle time report for the current sprint"
-
 ---
 
 ## File Structure
@@ -341,7 +293,6 @@ sprint_tools/
 ├── run.sh                   # Main entry point (orchestrates everything)
 ├── sprint_report_config.md  # Configuration (edit per sprint)
 ├── fetch_via_mcp.py         # Fetches Jira data (MCP gateway or direct REST) → JSON
-├── cycle_time_report.py     # Fetches GitHub PR metrics → JSON
 ├── sprint_report.py         # Generates report + chart from JSON
 ├── config_parser.py         # Parses sprint_report_config.md
 ├── report_generator.py      # Produces the markdown text report
@@ -360,8 +311,6 @@ sprint_tools/
 
 ```
 Jira (MCP or REST) ──→ fetch_via_mcp.py ──→ sprint_data_*.json ─┐
-                                                                  │
-GitHub (gh CLI) ──→ cycle_time_report.py ──→ cycle_time_data_*.json
                                                                   │
 sprint_report_config.md ──────────────────────────────────────────┤
                                                                   │
@@ -391,8 +340,7 @@ The generated report includes these sections (see `REPORT_FORMAT.md` for detaile
 6. **Sprint Completion & Velocity** — completion rate, story-point velocity, per-person breakdown
 7. **Carried-Over Closed Tickets** — tickets closed before sprint (excluded from all metrics)
 8. **Sprint Health Summary** — consolidated metrics
-9. **PR Cycle Time** — coding/pickup/review/cycle time per PR (if enabled)
-10. **Burndown Chart** — remaining work vs ideal, daily logged hours
+9. **Burndown Chart** — remaining work vs ideal, daily logged hours
 
 To generate the full field reference:
 ```bash
@@ -413,7 +361,6 @@ Before each sprint:
    - Any excluded tickets
 2. Run `pip install -r requirements.txt` (first time or after updates)
 3. Verify Jira access: either MCP gateway (`~/.cursor/mcp.json`) or `JIRA_TOKEN` in `.env`
-4. Verify GitHub CLI is authenticated (`gh auth status`) — optional
 
 Generate the report:
 ```bash
@@ -429,8 +376,6 @@ Generate the report:
 | `MCP gateway failed: ...` | MCP is down or misconfigured; script auto-falls back to direct REST API |
 | `No Jira PAT found` | Set `JIRA_TOKEN` in `.env`, env var, or pass `--jira-token`. Or configure MCP in Cursor |
 | `Error: sprint not found` | Check sprint name in config matches Jira exactly (case-sensitive) |
-| `Warning: 'gh' CLI not found` | Install GitHub CLI: `sudo apt install gh` or https://cli.github.com/ |
-| `Warning: 'gh' CLI not authenticated` | Run `gh auth login` and follow the prompts |
 | `ModuleNotFoundError: matplotlib` | Run `pip install -r requirements.txt` |
 | `Story points showing as N/A` | Your Jira uses `customfield_10344` — this is already configured |
 | Burndown chart looks empty | Check that team members have logged worklogs in Jira for the sprint dates |

@@ -7,7 +7,7 @@ Reads processed sprint data and produces a markdown report string.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date
 from dataclasses import dataclass, field
 
 from config_parser import SprintConfig
@@ -27,6 +27,7 @@ class TicketReport:
     pre_sprint_logged_hours: float
     in_sprint_logged_hours: float
     planned_hours: float  # estimate - pre_sprint_logged
+    remaining_hours: float | None = None  # Jira's current remaining_estimate
     story_points: float | None = None
     resolution_date: str = ""
     closed_before_sprint: bool = False
@@ -42,6 +43,7 @@ class PersonReport:
     tickets: list[TicketReport] = field(default_factory=list)
     total_planned_hours: float = 0.0
     total_logged_hours: float = 0.0
+    total_remaining_hours: float = 0.0  # sum of Jira remaining_estimate per ticket
     daily_logs: dict = field(default_factory=dict)  # date -> hours
 
 
@@ -128,6 +130,14 @@ def build_person_reports(
                 in_sprint += wl_hours
                 daily[wl_date] += wl_hours
 
+        # Planned work for THIS sprint: prefer Jira's remaining_estimate (what team committed
+        # when adding to sprint); fallback to estimate - pre_sprint for tickets without it.
+        rem_now = issue.get("remaining_estimate_hours")
+        if rem_now is not None and rem_now >= 0:
+            planned = rem_now + in_sprint  # remaining + already done this sprint = total committed
+        else:
+            planned = max(0, issue["estimate_hours"] - pre_sprint)
+
         if _is_closed_before_sprint(issue, sprint_start, in_sprint, pre_sprint):
             carried_over.append(TicketReport(
                 key=key,
@@ -147,8 +157,7 @@ def build_person_reports(
             ))
             continue
 
-        planned = max(0, issue["estimate_hours"] - pre_sprint)
-
+        rem_hours = rem_now if rem_now is not None and rem_now >= 0 else None
         tk = TicketReport(
             key=key,
             summary=issue["summary"][:70],
@@ -161,6 +170,7 @@ def build_person_reports(
             pre_sprint_logged_hours=pre_sprint,
             in_sprint_logged_hours=in_sprint,
             planned_hours=planned,
+            remaining_hours=rem_hours,
             story_points=issue.get("story_points"),
             resolution_date=issue.get("resolution_date", ""),
             closed_before_sprint=False,
@@ -171,6 +181,7 @@ def build_person_reports(
         pr.tickets.append(tk)
         pr.total_planned_hours += planned
         pr.total_logged_hours += in_sprint
+        pr.total_remaining_hours += rem_hours if rem_hours is not None else 0
 
         for d, h in daily.items():
             pr.daily_logs[d] = pr.daily_logs.get(d, 0) + h
@@ -229,12 +240,13 @@ def generate_text_report(
     ln("---")
     ln("## Planned vs Logged Work")
     ln()
-    ln("| Name | Capacity | Planned | Logged | Delta | Utilization |")
-    ln("|---|---|---|---|---|---|")
-    t_planned = t_logged = 0.0
+    ln("| Name | Capacity | Planned | Logged | Remaining | Delta | Utilization |")
+    ln("|---|---|---|---|---|---|---|")
+    t_planned = t_logged = t_remaining = 0.0
     for pr in person_reports:
         t_planned += pr.total_planned_hours
         t_logged += pr.total_logged_hours
+        t_remaining += pr.total_remaining_hours
         delta = pr.total_logged_hours - pr.total_planned_hours
         sign = "+" if delta >= 0 else ""
         util = (pr.total_logged_hours / pr.capacity_hours * 100) if pr.capacity_hours else 0
@@ -243,6 +255,7 @@ def generate_text_report(
             f"| {pr.name} | {pr.capacity_hours:.0f}h "
             f"| {pr.total_planned_hours:.0f}h ({plan_pct:.0f}%) "
             f"| {pr.total_logged_hours:.0f}h "
+            f"| {pr.total_remaining_hours:.0f}h "
             f"| {sign}{delta:.0f}h "
             f"| {util:.0f}% |"
         )
@@ -253,6 +266,7 @@ def generate_text_report(
         f"| **TEAM TOTAL** | **{total_cap:.0f}h** "
         f"| **{t_planned:.0f}h** "
         f"| **{t_logged:.0f}h** "
+        f"| **{t_remaining:.0f}h** "
         f"| **{t_sign}{t_delta:.0f}h** "
         f"| **{t_util:.0f}%** |"
     )
@@ -268,19 +282,21 @@ def generate_text_report(
                 continue
             ln(f"### {pr.name}")
             ln()
-            ln("| Ticket | Status | Estimate | Planned | Logged | Delta | Summary |")
-            ln("|---|---|---|---|---|---|---|")
+            ln("| Ticket | Status | Estimate | Planned | Logged | Remaining | Delta | Summary |")
+            ln("|---|---|---|---|---|---|---|---|")
             for tk in sorted(pr.tickets, key=lambda t: t.key):
                 d = tk.in_sprint_logged_hours - tk.planned_hours
                 ds = "+" if d >= 0 else ""
                 logged_fmt = hours_to_jira(tk.in_sprint_logged_hours)
                 if tk.in_sprint_logged_hours == 0 and tk.planned_hours > 0:
                     logged_fmt = f"**0h**"
+                rem_fmt = hours_to_jira(tk.remaining_hours) if tk.remaining_hours is not None else "—"
                 ln(
                     f"| {tk.key} | {tk.status} "
                     f"| {hours_to_jira(tk.estimate_hours)} "
                     f"| {hours_to_jira(tk.planned_hours)} "
                     f"| {logged_fmt} "
+                    f"| {rem_fmt} "
                     f"| {ds}{hours_to_jira(abs(d))} "
                     f"| {tk.summary[:50]} |"
                 )
@@ -462,187 +478,4 @@ def generate_text_report(
     ln(f"| Overcommitted members | {overcommitted} |")
     ln()
 
-    return "\n".join(lines)
-
-
-# ── Cycle Time Section ───────────────────────────────────────────────────────
-
-def _ct_fmt(hours: float | None) -> str:
-    """Format business hours into a compact human-readable string."""
-    if hours is None:
-        return "N/A"
-    if hours < 1:
-        return f"{hours * 60:.0f}m"
-    if hours < 24:
-        return f"{hours:.1f}h"
-    days = hours / 24
-    if days < 7:
-        return f"{days:.1f}d"
-    return f"{days / 7:.1f}w"
-
-
-def _ct_fmt_detail(hours: float | None) -> str:
-    if hours is None:
-        return "N/A"
-    if hours < 1:
-        return f"{hours * 60:.0f} min"
-    if hours < 24:
-        return f"{hours:.1f} hours"
-    days = hours / 24
-    return f"{days:.1f} days ({hours:.0f}h)"
-
-
-def _ct_avg(values: list[float]) -> float | None:
-    valid = [v for v in values if v is not None]
-    return sum(valid) / len(valid) if valid else None
-
-
-def generate_cycle_time_section(cycle_data: list[dict], repo: str = "") -> str:
-    """Generate a markdown section for PR cycle time metrics.
-
-    Parameters
-    ----------
-    cycle_data : list[dict]
-        List of PR metric dicts (from cycle_time_data_*.json).
-    repo : str
-        GitHub repo identifier for display.
-    """
-    lines: list[str] = []
-
-    def ln(s=""):
-        lines.append(s)
-
-    ln("---")
-    ln("## PR Cycle Time")
-    ln()
-    if repo:
-        ln(f"**Repo:** `{repo}`  ")
-    ln(f"**PRs analyzed:** {len(cycle_data)}  ")
-    ln(f"*All times are business hours (weekends excluded).*")
-    ln()
-
-    if not cycle_data:
-        ln("_No PR data available._")
-        ln()
-        return "\n".join(lines)
-
-    by_person: dict[str, list[dict]] = defaultdict(list)
-    for pr in cycle_data:
-        by_person[pr.get("assignee", "Unassigned")].append(pr)
-
-    # ── Summary table ────────────────────────────────────────────────────
-    ln("### Cycle Time by Team Member")
-    ln()
-    ln("| Person | PRs | Avg Coding | Avg Pickup | Avg Review | Avg Cycle |")
-    ln("|--------|:---:|:----------:|:----------:|:----------:|:---------:|")
-
-    team_coding: list[float] = []
-    team_pickup: list[float] = []
-    team_review: list[float] = []
-    team_cycle: list[float] = []
-
-    for person in sorted(by_person.keys()):
-        prs = by_person[person]
-        c = [p["coding_time_hours"] for p in prs if p.get("coding_time_hours") is not None]
-        p_ = [p["pickup_time_hours"] for p in prs if p.get("pickup_time_hours") is not None]
-        r = [p["review_time_hours"] for p in prs if p.get("review_time_hours") is not None]
-        cy = [p["cycle_time_hours"] for p in prs if p.get("cycle_time_hours") is not None]
-        team_coding.extend(c)
-        team_pickup.extend(p_)
-        team_review.extend(r)
-        team_cycle.extend(cy)
-        ln(
-            f"| {person} | {len(prs)} | {_ct_fmt(_ct_avg(c))} | "
-            f"{_ct_fmt(_ct_avg(p_))} | {_ct_fmt(_ct_avg(r))} | "
-            f"{_ct_fmt(_ct_avg(cy))} |"
-        )
-
-    ln(
-        f"| **TEAM AVERAGE** | **{len(cycle_data)}** | "
-        f"**{_ct_fmt(_ct_avg(team_coding))}** | "
-        f"**{_ct_fmt(_ct_avg(team_pickup))}** | "
-        f"**{_ct_fmt(_ct_avg(team_review))}** | "
-        f"**{_ct_fmt(_ct_avg(team_cycle))}** |"
-    )
-    ln()
-    ln("> **Coding** = First commit → PR creation | "
-       "**Pickup** = PR created → First human review | "
-       "**Review** = First review → Merge | "
-       "**Cycle** = First commit → Merge")
-    ln()
-
-    # ── Per-person PR detail ─────────────────────────────────────────────
-    ln("### PR Details by Person")
-    ln()
-
-    for person in sorted(by_person.keys()):
-        prs = by_person[person]
-        ln(f"**{person}**")
-        ln()
-        ln("| PR | Jira | State | Coding | Pickup | Review | Cycle | Size | Commits | Reviews |")
-        ln("|:---|:-----|:-----:|:------:|:------:|:------:|:-----:|:----:|:-------:|:-------:|")
-
-        for p in sorted(prs, key=lambda x: x.get("created_at") or ""):
-            state = p.get("state", "").lower()
-            url = p.get("url", "")
-            num = p.get("pr_number", "?")
-            ln(
-                f"| [#{num}]({url}) | {p.get('jira_key', '')} | {state} | "
-                f"{_ct_fmt(p.get('coding_time_hours'))} | "
-                f"{_ct_fmt(p.get('pickup_time_hours'))} | "
-                f"{_ct_fmt(p.get('review_time_hours'))} | "
-                f"{_ct_fmt(p.get('cycle_time_hours'))} | "
-                f"+{p.get('additions', 0)}/-{p.get('deletions', 0)} | "
-                f"{p.get('total_commits', 0)} | "
-                f"{p.get('total_human_reviews', 0)} |"
-            )
-
-        ln()
-
-    # ── Insights ─────────────────────────────────────────────────────────
-    ln("### Cycle Time Insights")
-    ln()
-
-    merged = [p for p in cycle_data if p.get("cycle_time_hours") is not None]
-    if merged:
-        fastest = min(merged, key=lambda p: p["cycle_time_hours"])
-        slowest = max(merged, key=lambda p: p["cycle_time_hours"])
-        ln(
-            f"- **Fastest merge:** [#{fastest['pr_number']}]({fastest.get('url', '')}) "
-            f"({fastest.get('jira_key', '')}) — {_ct_fmt_detail(fastest['cycle_time_hours'])}"
-        )
-        ln(
-            f"- **Slowest merge:** [#{slowest['pr_number']}]({slowest.get('url', '')}) "
-            f"({slowest.get('jira_key', '')}) — {_ct_fmt_detail(slowest['cycle_time_hours'])}"
-        )
-
-    if team_coding and team_pickup and team_review:
-        vals = [
-            ("Coding", _ct_avg(team_coding)),
-            ("Pickup", _ct_avg(team_pickup)),
-            ("Review", _ct_avg(team_review)),
-        ]
-        vals = [(n, v) for n, v in vals if v is not None]
-        if vals:
-            bottleneck = max(vals, key=lambda x: x[1])
-            ln(f"- **Biggest bottleneck:** {bottleneck[0]} Time "
-               f"({_ct_fmt_detail(bottleneck[1])} avg)")
-
-    open_prs = [p for p in cycle_data if p.get("state") == "OPEN"]
-    if open_prs:
-        ln(f"- **Open PRs awaiting review/merge:** {len(open_prs)}")
-        for p in open_prs:
-            created = p.get("created_at")
-            age = ""
-            if created:
-                try:
-                    dt = datetime.fromisoformat(created)
-                    age_h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
-                    age = f" — open for {_ct_fmt_detail(age_h)}"
-                except ValueError:
-                    pass
-            reviewed = "reviewed" if p.get("first_human_review_at") else "**no review yet**"
-            ln(f"  - [#{p['pr_number']}]({p.get('url', '')}) ({p.get('jira_key', '')}){age}, {reviewed}")
-
-    ln()
     return "\n".join(lines)

@@ -18,7 +18,6 @@ Use it to understand how metrics are calculated, where data comes from, and how 
 modify or extend the report.
 
 **Generator code:** `report_generator.py` → `generate_text_report()`
-**Cycle time code:** `report_generator.py` → `generate_cycle_time_section()`
 **Burndown chart:** `burndown_chart.py` → `generate_burndown_chart()`
 
 > **Regenerate this file** any time the report format changes:
@@ -72,14 +71,16 @@ Compares each person's planned work against actual logged work.
 |--------|-------------|--------|
 | Name | Team member | Config |
 | Capacity | `capacity_hours` from Team Capacity | Derived |
-| Planned | `max(0, estimate_hours - pre_sprint_logged_hours)` summed across all assigned tickets | Jira `timetracking.original_estimate` minus worklogs before sprint start |
+| Planned | Per ticket: `remaining_estimate + in_sprint_logged` when Jira has remaining set; else `max(0, estimate - pre_sprint)`. Summed across all assigned tickets. | Jira `timetracking.remaining_estimate` (preferred) or `original_estimate - pre_sprint` |
 | Logged | Sum of worklog hours within `[sprint_start, sprint_end]` for this person | Jira worklogs (`/rest/api/2/issue/{key}/worklog`) |
+| Remaining | Sum of Jira's current `remaining_estimate` per ticket | Jira `timetracking.remaining_estimate` |
 | Delta | `Logged - Planned` | Derived |
 | Utilization | `Logged / Capacity × 100` | Derived |
 
 **Key formula:**
 ```
-planned_per_ticket = max(0, estimate_hours - pre_sprint_logged_hours)
+planned_per_ticket = remaining_estimate + in_sprint_logged  (when Jira has remaining set)
+                   = max(0, estimate_hours - pre_sprint)   (fallback)
 total_planned = sum(planned_per_ticket) for all assigned tickets
 utilization = total_logged / capacity_hours × 100%
 ```
@@ -100,8 +101,9 @@ Detailed breakdown of every ticket assigned to each person (toggled by `show_per
 | Ticket | Jira issue key | Jira issue `key` |
 | Status | Current Jira status name | Jira `status.name` |
 | Estimate | Original time estimate | Jira `timetracking.original_estimate` |
-| Planned | `max(0, estimate - pre_sprint_logged)` | Derived |
+| Planned | `remaining_estimate + in_sprint_logged` when Jira has remaining; else `max(0, estimate - pre_sprint)` | Jira / Derived |
 | Logged | In-sprint logged hours for this ticket | Jira worklogs within sprint dates |
+| Remaining | Jira's current remaining estimate for this ticket | Jira `timetracking.remaining_estimate` |
 | Delta | `Logged - Planned` (positive = over, negative = under) | Derived |
 | Summary | First 50 chars of issue summary | Jira `summary` |
 
@@ -228,56 +230,7 @@ A consolidated view of key sprint health indicators.
 
 ---
 
-## 9. PR Cycle Time (optional)
-
-Generated from GitHub PR data via `cycle_time_report.py`. Requires the GitHub CLI (`gh`) to be installed and authenticated. If `gh` is not available, this section displays a note that cycle time data is unavailable — all other report sections work normally.
-
-To suppress the note entirely, use `--skip-cycle-time`.
-
-Appended to the main report when `--cycle-time-data` is provided and the data file exists.
-
-### 9a. Cycle Time by Team Member
-
-| Column | Calculation | Source |
-|--------|-------------|--------|
-| Person | PR author (mapped from GitHub username) | GitHub API |
-| PRs | Count of PRs for this person | GitHub API |
-| Avg Coding | Average: first commit → PR creation | `gh pr` commits + creation date |
-| Avg Pickup | Average: PR creation → first human review | GitHub reviews timeline |
-| Avg Review | Average: first human review → merge | GitHub reviews + merge date |
-| Avg Cycle | Average: first commit → merge | End-to-end |
-
-**Time calculation:**
-- All times are **business hours** (weekends Mon–Fri only, Sat/Sun excluded)
-- `business_hours_between(start, end)` counts only hours on weekdays
-
-### 9b. PR Details by Person
-
-| Column | Source |
-|--------|--------|
-| PR | GitHub PR number + link |
-| Jira | Jira ticket key extracted from PR branch name |
-| State | merged / open / closed |
-| Coding | First commit timestamp → PR created_at |
-| Pickup | PR created_at → first human review timestamp |
-| Review | First human review → merged_at |
-| Cycle | First commit → merged_at |
-| Size | Lines added / deleted |
-| Commits | Total commit count |
-| Reviews | Count of human reviews (excludes bot reviews) |
-
-### 9c. Cycle Time Insights
-
-| Insight | Calculation |
-|---------|-------------|
-| Fastest merge | PR with minimum `cycle_time_hours` among merged PRs |
-| Slowest merge | PR with maximum `cycle_time_hours` among merged PRs |
-| Biggest bottleneck | Whichever of Coding/Pickup/Review has the highest team average |
-| Open PRs awaiting review/merge | PRs with state "OPEN", showing age and review status |
-
----
-
-## 10. Burndown Chart (PNG)
+## 9. Burndown Chart (PNG)
 
 Two-panel chart saved as `sprint_burndown_{name}.png`.
 
@@ -306,8 +259,6 @@ Two-panel chart saved as `sprint_burndown_{name}.png`.
 
 ```
 Jira MCP Server ──→ fetch_via_mcp.py ──→ sprint_data_*.json ─┐
-                                                               │
-GitHub (gh CLI) ──→ cycle_time_report.py ──→ cycle_time_data_*.json
                                                                │
 sprint_report_config.md ───────────────────────────────────────┤
                                                                │
@@ -342,8 +293,6 @@ All report behaviour is controlled by `sprint_report_config.md`. Key fields:
 | `Exclude Parent Estimates` | Planned vs Logged, Velocity | Whether parent issues count |
 | `Show Per-Ticket Details` | Per-Ticket Details | Toggle section on/off |
 | `Show Daily Log Gaps` | Daily Log Gaps | Toggle section on/off |
-| `GitHub Repo` | PR Cycle Time | Repo identifier for `gh` CLI |
-| `Generate PR cycle time report` | PR Cycle Time | Toggle cycle time analysis |
 
 ---
 
@@ -368,10 +317,9 @@ All report behaviour is controlled by `sprint_report_config.md`. Key fields:
 
 ### Adding a new data source
 
-1. Create a new fetch script (similar to `cycle_time_report.py`)
-2. Have it output a JSON file
-3. Pass the JSON path as an argument to `sprint_report.py`
-4. Load and integrate in `generate_text_report()` or as a separate `generate_*_section()` function
+1. Create a new fetch script that outputs a JSON file
+2. Pass the JSON path as an argument to `sprint_report.py`
+3. Load and integrate in `generate_text_report()` or as a separate `generate_*_section()` function
 
 ### Jira custom fields
 

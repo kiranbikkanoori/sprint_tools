@@ -166,7 +166,8 @@ def _classify_rest(raw: dict) -> str:
 def convert_issue_mcp(raw: dict) -> dict:
     """Convert an issue from MCP gateway response (fields at top level)."""
     tt = raw.get("timetracking", {}) or {}
-    est_raw = tt.get("original_estimate", "0") or "0"
+    est_raw = tt.get("original_estimate") or tt.get("originalEstimate", "0") or "0"
+    rem_raw = tt.get("remaining_estimate") or tt.get("remainingEstimate", "0") or "0"
     assignee = raw.get("assignee") or {}
     status = raw.get("status", {})
 
@@ -183,6 +184,8 @@ def convert_issue_mcp(raw: dict) -> dict:
         "assignee": assignee.get("display_name", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
+        "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
+        "remaining_estimate_raw": rem_raw,
         "story_points": extract_story_points(raw),
         "resolution_date": resolution_date,
         "parent_key": (raw.get("parent") or {}).get("key"),
@@ -194,6 +197,7 @@ def convert_issue_rest(raw: dict) -> dict:
     fields = raw.get("fields", {})
     tt = fields.get("timetracking", {}) or {}
     est_raw = tt.get("originalEstimate", "0") or "0"
+    rem_raw = tt.get("remainingEstimate", "0") or "0"
     assignee = fields.get("assignee") or {}
     status = fields.get("status", {})
     parent = fields.get("parent")
@@ -211,6 +215,8 @@ def convert_issue_rest(raw: dict) -> dict:
         "assignee": assignee.get("displayName", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
+        "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
+        "remaining_estimate_raw": rem_raw,
         "story_points": extract_story_points(fields),
         "resolution_date": resolution_date,
         "parent_key": parent.get("key") if parent else None,
@@ -318,116 +324,6 @@ def resolve_jira_pat(cli_arg: str | None) -> str:
         print("Error: no PAT provided.", file=sys.stderr)
         sys.exit(1)
     return pat
-
-
-# ── Dev-status (PR info from Jira) ──────────────────────────────────────────
-
-def _make_dev_status_session(base_url: str, pat: str) -> requests.Session:
-    """Create a requests session for the Jira dev-status REST API."""
-    session = requests.Session()
-    session.auth = BearerAuth(pat)
-    session.headers["Content-Type"] = "application/json"
-    session.base_url = base_url.rstrip("/")
-    return session
-
-
-def fetch_dev_status_prs(base_url: str, pat: str, issue_id: str) -> list[dict]:
-    """
-    Call Jira's dev-status detail API to get linked GitHub PRs for an issue.
-    Returns a list of dicts with keys: number, repo, branch, url, status.
-    Returns [] on any failure.
-    """
-    try:
-        url = f"{base_url.rstrip('/')}/rest/dev-status/latest/issue/detail"
-        resp = requests.get(
-            url,
-            params={"issueId": issue_id, "applicationType": "github", "dataType": "pullrequest"},
-            auth=BearerAuth(pat),
-            headers={"Content-Type": "application/json"},
-            timeout=15,
-        )
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-    except Exception:
-        return []
-
-    prs: list[dict] = []
-    for detail in data.get("detail", []):
-        for pr in detail.get("pullRequests", []):
-            pr_url = pr.get("url", "")
-            repo_full = ""
-            pr_number = 0
-            # Parse PR URL: https://github.com/OWNER/REPO/pull/123
-            if "github.com" in pr_url:
-                parts = pr_url.rstrip("/").split("/")
-                try:
-                    pull_idx = parts.index("pull")
-                    pr_number = int(parts[pull_idx + 1])
-                    repo_full = f"{parts[pull_idx - 2]}/{parts[pull_idx - 1]}"
-                except (ValueError, IndexError):
-                    pass
-
-            prs.append({
-                "number": pr_number,
-                "repo": repo_full,
-                "branch": pr.get("source", {}).get("branch", ""),
-                "url": pr_url,
-                "status": pr.get("status", ""),
-            })
-    return prs
-
-
-def enrich_issues_with_pr_info(
-    issues: list[dict],
-    raw_issues: list[dict],
-    jira_base_url: str,
-    jira_pat: str,
-    sprint_start_date: str = "",
-) -> None:
-    """
-    For each issue, call the dev-status API to get linked PRs and
-    add a ``pull_requests`` field to the issue dict (in-place).
-
-    *raw_issues* are the original Jira API response objects containing the
-    issue ID (the ``"id"`` field, present in both MCP and REST responses).
-
-    Tickets resolved before *sprint_start_date* are skipped (carryovers
-    from previous sprints).
-    """
-    raw_by_key = {r.get("key", r.get("id")): r for r in raw_issues}
-
-    eligible = []
-    skipped = 0
-    for issue in issues:
-        rd = issue.get("resolution_date", "")
-        if sprint_start_date and rd and rd < sprint_start_date:
-            skipped += 1
-            continue
-        if issue.get("type") == "Parent":
-            continue
-        eligible.append(issue)
-
-    if skipped:
-        print(f"  Skipping {skipped} ticket(s) resolved before sprint start ({sprint_start_date}).")
-
-    print(f"Fetching PR links from Jira dev-status for {len(eligible)} tickets...", end="", flush=True)
-    fetched = 0
-    for issue in eligible:
-        key = issue["key"]
-        raw = raw_by_key.get(key, {})
-        issue_id = str(raw.get("id", ""))
-        if not issue_id:
-            issue["pull_requests"] = []
-            continue
-        prs = fetch_dev_status_prs(jira_base_url, jira_pat, issue_id)
-        issue["pull_requests"] = prs
-        fetched += 1
-        if fetched % 5 == 0:
-            print(f" {fetched}/{len(eligible)}", end="", flush=True)
-    print(" done.")
-    pr_total = sum(len(i.get("pull_requests", [])) for i in issues)
-    print(f"  PR links found: {pr_total} across {len(eligible)} tickets")
 
 
 def resolve_jira_pat_optional(cli_arg: str | None) -> str | None:
@@ -647,24 +543,6 @@ def fetch_via_mcp(
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
 
-    # Enrich issues with PR info from dev-status API
-    # Only worthwhile if GitHub MCP is also configured (otherwise cycle_time_report can't use it)
-    github_mcp_available = False
-    mcp_cfg_path = find_mcp_config()
-    if mcp_cfg_path:
-        github_mcp_available = load_mcp_server_config(mcp_cfg_path, "github") is not None
-
-    if not github_mcp_available:
-        print("  Skipping PR link enrichment (no GitHub MCP configured).")
-    else:
-        pat = jira_token or resolve_jira_pat_optional(None)
-        base_url = jira_url or resolve_jira_url(None)
-        if pat:
-            enrich_issues_with_pr_info(issues, all_raw_issues, base_url, pat, sprint_start_date=start_date)
-        else:
-            print("  Skipping PR link enrichment (no Jira PAT available).")
-            print("  Set JIRA_TOKEN env var or add to .env for PR cycle time support.")
-
     _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
 
 
@@ -711,16 +589,6 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
         if (idx + 1) % 5 == 0:
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
-
-    github_mcp_available = False
-    mcp_cfg_path = find_mcp_config()
-    if mcp_cfg_path:
-        github_mcp_available = load_mcp_server_config(mcp_cfg_path, "github") is not None
-
-    if github_mcp_available:
-        enrich_issues_with_pr_info(issues, all_raw_issues, base_url, pat, sprint_start_date=start_date)
-    else:
-        print("  Skipping PR link enrichment (no GitHub MCP configured).")
 
     _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
 

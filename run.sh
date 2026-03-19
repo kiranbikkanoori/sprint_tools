@@ -3,7 +3,7 @@
 # Sprint Report Runner
 # ====================
 # Fetches data from Jira (via MCP gateway or direct REST API), generates the
-# text report, burndown chart, and PR cycle time report.
+# text report and burndown chart.
 #
 # Usage:
 #   ./run.sh                          # full run with defaults
@@ -11,8 +11,6 @@
 #   ./run.sh --fetch-only             # only fetch data, skip report
 #   ./run.sh --report-only            # only generate report from existing data
 #   ./run.sh --board-id 1325          # optional: force a specific board
-#   ./run.sh --gh-repo OWNER/REPO     # GitHub repo for PR cycle time report
-#   ./run.sh --skip-cycle-time        # skip the PR cycle time report
 #   ./run.sh --no-mcp                 # skip MCP, use direct Jira REST API
 #   ./run.sh --jira-url URL           # override Jira base URL
 #   ./run.sh --cleanup                # delete generated files (data, output, pycache)
@@ -28,11 +26,9 @@ CONFIG="sprint_report_config.md"
 OUTPUT_DIR="./output"
 BOARD_ID=""
 MCP_CONFIG=""
-GH_REPO=""
 CLEANUP=false
 FETCH_ONLY=false
 REPORT_ONLY=false
-SKIP_CYCLE_TIME=false
 GENERATE_FORMAT=false
 NO_MCP=false
 JIRA_URL=""
@@ -51,8 +47,6 @@ Options:
   --no-mcp                Skip MCP gateway, use direct Jira REST API
   --jira-url URL          Jira base URL (default: from .env.defaults or https://jira.silabs.com)
   --jira-token TOKEN      Jira PAT (prefer JIRA_TOKEN env var or .env file instead)
-  --gh-repo OWNER/REPO    GitHub repo for cycle time report (reads from config if omitted)
-  --skip-cycle-time       Skip the PR cycle time report (Step 3)
   --generate-format       Generate REPORT_FORMAT.md (field reference) and exit
   --cleanup               Remove sprint_data JSON after generating report
   --fetch-only            Only fetch data from Jira, skip report generation
@@ -63,9 +57,7 @@ Examples:
   ./run.sh                                    # Full run (auto-detects MCP or REST)
   ./run.sh --board-id 1325                    # Full run, known board
   ./run.sh --no-mcp                           # Full run, direct REST API (no Cursor needed)
-  ./run.sh --gh-repo Org/repo                 # Full run with cycle time for specific repo
   ./run.sh --report-only -o ./my_output       # Re-generate from existing data
-  ./run.sh --skip-cycle-time                  # Run without PR cycle time analysis
   ./run.sh --generate-format                  # Generate field reference doc
   ./run.sh --cleanup                          # Delete generated files
 EOF
@@ -78,8 +70,6 @@ while [[ $# -gt 0 ]]; do
         -o|--output-dir)   OUTPUT_DIR="$2"; shift 2 ;;
         --board-id)        BOARD_ID="$2"; shift 2 ;;
         --mcp-config)      MCP_CONFIG="$2"; shift 2 ;;
-        --gh-repo)         GH_REPO="$2"; shift 2 ;;
-        --skip-cycle-time) SKIP_CYCLE_TIME=true; shift ;;
         --generate-format) GENERATE_FORMAT=true; shift ;;
         --no-mcp)          NO_MCP=true; shift ;;
         --jira-url)        JIRA_URL="$2"; shift 2 ;;
@@ -107,11 +97,6 @@ fi
 SAFE_NAME="${SPRINT_NAME// /_}"
 DATA_FILE="sprint_data_${SAFE_NAME}.json"
 
-# Extract GitHub repo from config if not provided via --gh-repo
-if [[ -z "$GH_REPO" ]]; then
-    GH_REPO=$(grep 'GitHub Repo' "$CONFIG" | grep -oP '`[^`]+`' | tr -d '`' | head -1) || true
-fi
-
 # ── Cleanup-only mode ────────────────────────────────────────────────────────
 if [[ "$CLEANUP" == true && "$FETCH_ONLY" == false && "$REPORT_ONLY" == false ]]; then
     echo "── Cleanup ──"
@@ -136,7 +121,6 @@ echo "=============================================="
 echo "  Config:      $CONFIG"
 echo "  Data file:   $DATA_FILE"
 echo "  Output dir:  $OUTPUT_DIR"
-echo "  GitHub repo: ${GH_REPO:-(not set, cycle time will be skipped)}"
 echo ""
 
 # ── Step 1: Fetch data ──────────────────────────────────────────────────────
@@ -162,39 +146,12 @@ else
     echo ""
 fi
 
-# ── Step 2: PR Cycle Time analysis (via GitHub MCP) ─────────────────────────
-CYCLE_TIME_JSON=""
-if [[ "$FETCH_ONLY" == false && "$SKIP_CYCLE_TIME" == false ]]; then
-    echo "── Step 2: Generating PR cycle time data (via GitHub MCP) ──"
-
-    CYCLE_TIME_JSON="$OUTPUT_DIR/cycle_time_data_${SAFE_NAME}.json"
-
-    mkdir -p "$OUTPUT_DIR"
-    CYCLE_ARGS=(--data "$DATA_FILE" --config "$CONFIG" --output-dir "$OUTPUT_DIR")
-    [[ -n "$GH_REPO" ]] && CYCLE_ARGS+=(--repo "$GH_REPO")
-    [[ -n "$MCP_CONFIG" ]] && CYCLE_ARGS+=(--mcp-config "$MCP_CONFIG")
-
-    python3 cycle_time_report.py "${CYCLE_ARGS[@]}"
-    echo ""
-else
-    echo "── Step 2: Skipped ──"
-    echo ""
-fi
-
-# ── Step 3: Generate sprint report + chart ─────────────────────────────────
+# ── Step 2: Generate sprint report + chart ─────────────────────────────────
 if [[ "$FETCH_ONLY" == false ]]; then
-    echo "── Step 3: Generating sprint report and chart ──"
+    echo "── Step 2: Generating sprint report and chart ──"
     mkdir -p "$OUTPUT_DIR"
 
-    REPORT_ARGS=(--config "$CONFIG" --data "$DATA_FILE" --output-dir "$OUTPUT_DIR")
-    if [[ -n "$CYCLE_TIME_JSON" ]]; then
-        REPORT_ARGS+=(--cycle-time-data "$CYCLE_TIME_JSON")
-        if [[ -f "$CYCLE_TIME_JSON" && -n "$GH_REPO" ]]; then
-            REPORT_ARGS+=(--gh-repo "$GH_REPO")
-        fi
-    fi
-
-    python3 sprint_report.py "${REPORT_ARGS[@]}"
+    python3 sprint_report.py --config "$CONFIG" --data "$DATA_FILE" --output-dir "$OUTPUT_DIR"
     echo ""
 else
     echo "── Step 3: Skipped (--fetch-only) ──"

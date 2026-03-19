@@ -1,7 +1,7 @@
 """
 Shared MCP-over-HTTP client for sprint tools.
 
-Provides the McpClient class for communicating with MCP servers (Jira, GitHub, etc.)
+Provides the McpClient class for communicating with MCP servers (e.g. Jira)
 via the Streamable HTTP transport, plus helpers for locating and loading mcp.json config.
 """
 
