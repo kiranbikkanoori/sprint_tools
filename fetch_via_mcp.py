@@ -532,7 +532,7 @@ def fetch_via_mcp(
     issues = [convert_issue_mcp(i) for i in all_raw_issues]
     parent_keys = {i["key"] for i in issues if i["type"] == "Parent"}
 
-    tickets_to_fetch = [i["key"] for i in issues if i["key"] not in parent_keys]
+    tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
     worklogs: dict[str, list[dict]] = {}
     for idx, key in enumerate(tickets_to_fetch):
@@ -580,7 +580,7 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
     issues = [convert_issue_rest(i) for i in all_raw_issues]
     parent_keys = {i["key"] for i in issues if i["type"] == "Parent"}
 
-    tickets_to_fetch = [i["key"] for i in issues if i["key"] not in parent_keys]
+    tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
     worklogs: dict[str, list[dict]] = {}
     for idx, key in enumerate(tickets_to_fetch):

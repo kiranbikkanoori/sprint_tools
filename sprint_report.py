@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Sprint report CLI — generates a text report and/or burndown chart from a
-sprint data JSON file and a sprint_report_config.md.
+Sprint report CLI — generates a markdown report and a stacked daily-hours chart
+(parent + standalone worklogs only; burndown line not shown).
 
 Usage
 -----
-    # Full report + burndown chart
+    # Full report + chart
     python sprint_report.py --config ../sprint_report_config.md --data sprint_data.json
 
     # Chart only
@@ -33,9 +33,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
-from report_generator import build_person_reports, generate_text_report
+from report_generator import build_parent_work_report, generate_text_report
 from report_format import generate_report_format
-from utils import working_days_in_range
 
 
 def load_sprint_data(data_path: str | Path) -> dict:
@@ -116,33 +115,33 @@ def main():
 
     issues = data["issues"]
     worklogs = data["worklogs"]
-    working_days = working_days_in_range(sprint_start, sprint_end)
 
     included_names = [m.name for m in config.team_members if m.included]
-    parent_count = sum(1 for i in issues if i["type"] == "Parent")
+    excluded_keys = set(config.excluded_tickets)
+    chart_keys = {
+        i["key"]
+        for i in issues
+        if i.get("type") in ("Parent", "Standalone")
+        and i.get("key")
+        and i["key"] not in excluded_keys
+    }
+    chart_worklogs = {k: worklogs.get(k, []) for k in chart_keys}
 
-    # ── Build person reports ─────────────────────────────────────────────
-    build_result = build_person_reports(
-        config, sprint_start, sprint_end, issues, worklogs, working_days,
+    work_report = build_parent_work_report(
+        config,
+        sprint_start,
+        sprint_end,
+        issues,
+        worklogs,
+        report_date=report_date,
     )
-    person_reports = build_result.person_reports
-    carried_over = build_result.carried_over
-
-    if carried_over:
-        print(f"Excluded {len(carried_over)} ticket(s) closed before sprint start.")
-
-    # ── Totals for burndown ──────────────────────────────────────────────
-    total_planned = sum(pr.total_planned_hours for pr in person_reports)
-    total_remaining = sum(pr.total_remaining_hours for pr in person_reports)
 
     safe_name = config.sprint_name.replace(" ", "_")
 
     # ── Text report ──────────────────────────────────────────────────────
     if not args.chart_only:
         report_text = generate_text_report(
-            config, sprint_start, sprint_end,
-            person_reports, len(issues), parent_count, sprint_goal,
-            carried_over=carried_over,
+            config, sprint_start, sprint_end, work_report, sprint_goal=sprint_goal,
         )
 
         report_path = output_dir / f"sprint_report_{safe_name}.md"
@@ -161,19 +160,14 @@ def main():
             )
             sys.exit(1)
 
-        excluded_keys = {tk.key for tk in carried_over}
-        chart_worklogs = {k: v for k, v in worklogs.items() if k not in excluded_keys}
-
         chart_path = output_dir / f"sprint_burndown_{safe_name}.png"
         generate_burndown_chart(
             sprint_name=config.sprint_name,
             sprint_start=sprint_start,
             sprint_end=sprint_end,
-            total_planned_hours=total_planned,
             member_names=included_names,
             worklogs=chart_worklogs,
             report_date=report_date,
-            total_remaining_hours=total_remaining,
             output_path=chart_path,
         )
         print(f"Burndown chart saved to: {chart_path}")

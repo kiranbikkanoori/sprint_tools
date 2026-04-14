@@ -11,323 +11,92 @@ def generate_report_format() -> str:
     return _FORMAT_TEXT
 
 
-_FORMAT_TEXT = r"""# Sprint Report — Field Reference
+_FORMAT_TEXT = r"""# Sprint Report — Field Reference (parent worklog model)
 
-This document describes every section and field in the generated sprint report.
-Use it to understand how metrics are calculated, where data comes from, and how to
-modify or extend the report.
+This document describes the current sprint report. Regenerate after changes:
 
-**Generator code:** `report_generator.py` → `generate_text_report()`
-**Burndown chart:** `burndown_chart.py` → `generate_burndown_chart()`
+```
+python sprint_report.py --generate-format -o ./output
+```
 
-> **Regenerate this file** any time the report format changes:
-> ```
-> python sprint_report.py --generate-format -o ./output
-> ```
+**Code:** `report_generator.py` → `build_parent_work_report()`, `generate_text_report()`  
+**Chart:** `burndown_chart.py` → `generate_burndown_chart()` (stacked hours only; burndown line removed)
 
 ---
 
 ## Report Header
 
-| Field | Description | Source |
-|-------|-------------|--------|
-| Sprint Name | Name of the sprint | `sprint_report_config.md` → Sprint Name |
-| Sprint Duration | Start and end dates, duration in weeks | Jira sprint data (`start_date`, `end_date`) + config (`sprint_duration_weeks`) |
-| Report Date | Date the report was generated | Config `report_date`, defaults to today |
-| Sprint Goal | Sprint goal text | Jira sprint `goal` field |
-| Carried-over note | Count of tickets closed before sprint start | Detected automatically (see [Carried-Over Logic](#7-carried-over-closed-tickets-excluded)) |
+| Field | Source |
+|-------|--------|
+| Sprint name, duration label | `sprint_report_config.md` + Jira `start_date` / `end_date` |
+| Report date | Config `report_date` or “today” |
+| Sprint goal | Jira sprint `goal` |
 
 ---
 
-## 1. Team Capacity
+## Logged Hours by Person — Parent tasks / Standalone tasks
 
-Shows each team member's available working capacity for the sprint.
+Two separate markdown tables with the same date columns:
 
-| Column | Calculation | Source |
-|--------|-------------|--------|
-| Name | Team member display name | `sprint_report_config.md` → Team Members |
-| Eff. Days | `working_days - meeting_days_reserved - leave_days` | Config + Jira sprint dates |
-| Eff. Hours | `Eff. Days × 8 - other_exclusion_hours` | Derived |
-| Leave | Planned leave days | `sprint_report_config.md` → Planned Leaves |
-| Notes | Leave/exclusion details | Config |
-| **TOTAL** | Sum of all Eff. Hours | Derived |
+1. **Parent tasks** — hours from worklogs on **Parent** issues only.
+2. **Standalone tasks** — hours from worklogs on **Standalone** issues only.
 
-**Key formula:**
-```
-working_days = weekdays between sprint_start and sprint_end (inclusive)
-effective_days = working_days - meeting_days_reserved - leave_days
-capacity_hours = effective_days × 8 - other_exclusion_hours
-```
+- **Included people:** Team members with **Include in Report = Yes** (name must match Jira worklog author).
+- **Sub-task** worklogs do not appear in these tables (they appear under validation instead).
+- **Dates:** Each table has one column per **weekday** from sprint start through `min(sprint_end, report_date)` (when `report_date` is set), plus a **total** column.
+- **Team total row:** Last row sums hours **across all included people** for each day and for the row total.
 
-**Config fields used:** `team_members`, `planned_leaves`, `other_exclusions`, `meeting_days_reserved`
+**Mid-sprint:** If `report_date` in config is empty, the cut-off is **today**, so weekday columns and worklog filtering stop at `min(sprint_end, today)`.
 
 ---
 
-## 2. Planned vs Logged Work
+## Weekdays With Zero Logged Hours (parent + standalone)
 
-Compares each person's planned work against actual logged work.
-
-| Column | Calculation | Source |
-|--------|-------------|--------|
-| Name | Team member | Config |
-| Capacity | `capacity_hours` from Team Capacity | Derived |
-| Planned | Per ticket: `remaining_estimate + in_sprint_logged` when Jira has remaining set; else `max(0, estimate - pre_sprint)`. Summed across all assigned tickets. | Jira `timetracking.remaining_estimate` (preferred) or `original_estimate - pre_sprint` |
-| Logged | Sum of worklog hours within `[sprint_start, sprint_end]` for this person | Jira worklogs (`/rest/api/2/issue/{key}/worklog`) |
-| Remaining | Sum of Jira's current `remaining_estimate` per ticket | Jira `timetracking.remaining_estimate` |
-| Delta | `Logged - Planned` | Derived |
-| Utilization | `Logged / Capacity × 100` | Derived |
-
-**Key formula:**
-```
-planned_per_ticket = remaining_estimate + in_sprint_logged  (when Jira has remaining set)
-                   = max(0, estimate_hours - pre_sprint)   (fallback)
-total_planned = sum(planned_per_ticket) for all assigned tickets
-utilization = total_logged / capacity_hours × 100%
-```
-
-**Notes:**
-- `pre_sprint_logged_hours` = sum of worklog hours where `wl.started < sprint_start`
-- Only worklogs authored by included team members count toward `Logged`
-- Parent tickets are excluded if `exclude_parent_estimates` is set in config
+Weekdays in the report range where an included person logged **nothing on parent or standalone** (combined). Logging only on sub-tasks in that range still shows as a “missing” day for this section.
 
 ---
 
-## 3. Per-Ticket Worklog Details
+## Validation: Sub-tasks With Remaining Work
 
-Detailed breakdown of every ticket assigned to each person (toggled by `show_per_ticket_details` in config).
-
-| Column | Calculation | Source |
-|--------|-------------|--------|
-| Ticket | Jira issue key | Jira issue `key` |
-| Status | Current Jira status name | Jira `status.name` |
-| Estimate | Original time estimate | Jira `timetracking.original_estimate` |
-| Planned | `remaining_estimate + in_sprint_logged` when Jira has remaining; else `max(0, estimate - pre_sprint)` | Jira / Derived |
-| Logged | In-sprint logged hours for this ticket | Jira worklogs within sprint dates |
-| Remaining | Jira's current remaining estimate for this ticket | Jira `timetracking.remaining_estimate` |
-| Delta | `Logged - Planned` (positive = over, negative = under) | Derived |
-| Summary | First 50 chars of issue summary | Jira `summary` |
-
-**Notes:**
-- Tickets with 0h logged but >0h planned are highlighted in **bold**
-- Tickets sorted by key within each person
+Sub-task issues (after config exclusions) with **remaining estimate** greater than zero. Requires `remaining_estimate_hours` (or raw) in the JSON — produced by `fetch_via_mcp.py` / `fetch_sprint_data.py`.
 
 ---
 
-## 4. Ticket Status Distribution
+## Validation: Work Logged on Sub-tasks
 
-Counts tickets by their current Jira status.
-
-| Field | Calculation | Source |
-|-------|-------------|--------|
-| Status | Jira status name (e.g., "Open", "In Progress", "Closed") | Jira `status.name` |
-| Count | Number of active sprint tickets in that status | Derived |
-| Completion | `closed / total` and `(closed + in_review) / total` | `status_category == "Done"` for closed; status name contains "review" for in-review |
+Worklog entries on **Sub-task** issues whose **started** date falls in **[sprint_start, min(sprint_end, report_date)]**. Lists total hours and breakdown **by author** (all authors, not only included members).
 
 ---
 
-## 5. Daily Log Gaps
+## Other Metrics
 
-Shows working days where a team member logged zero hours (toggled by `show_daily_log_gaps` in config).
-
-| Column | Calculation | Source |
-|--------|-------------|--------|
-| Name | Team member | Config |
-| Missing Days | Count of working days with 0h logged | Jira worklogs vs working days calendar |
-| Dates | List of specific dates with no logged work | Derived |
-
-**Notes:**
-- Only counts Mon–Fri working days within the sprint window
-- Useful for identifying worklog compliance issues
+Placeholder text only — planned capacity, utilization, velocity, burndown, etc. are **not** calculated in this mode.
 
 ---
 
-## 6. Sprint Completion & Velocity
+## Chart PNG
 
-### 6a. Sprint Completion Rate
-
-| Field | Calculation | Target |
-|-------|-------------|--------|
-| Completed / Committed | Tickets with `status_category == "Done"` / total active tickets | ≥ 90% |
-| Completed + In Review | `(Done + In Review) / total` | — |
-| Status | `ON TRACK` (≥90%), `AT RISK` (70–89%), `BEHIND` (<70%) | — |
-
-**Notes:**
-- Only active sprint tickets count (carried-over closed tickets are excluded)
-- "In Review" = any ticket whose status name contains "review" (case-insensitive)
-
-### 6b. Sprint Velocity
-
-| Field | Calculation | Source |
-|-------|-------------|--------|
-| Story Points committed | Sum of `story_points` for all active tickets | Jira `customfield_10344` |
-| Story Points completed | Sum of `story_points` for tickets with `status_category == "Done"` | Same field, filtered by status |
-| Team man-days available | Sum of `capacity_days` for all included members | Derived from Team Capacity |
-| **Velocity** | `SP completed / man-days available` | Derived |
-
-**Fallback:** If no tickets have story points, velocity uses estimated hours instead:
-```
-Velocity = estimated_hours_of_completed_tickets / team_man_days
-```
-
-**Key distinction:** Story points completed = story points of **closed tickets only** (not based on logged hours). A 2 SP ticket that took 5 days of actual work still counts as 2 SP completed.
-
-### 6c. Velocity by Team Member
-
-Same calculation as team velocity, broken down per person:
-
-| Column | Calculation |
-|--------|-------------|
-| Person | Team member name |
-| Man-days | Person's `capacity_days` |
-| SP Committed | Sum of `story_points` across their assigned tickets |
-| SP Completed | Sum of `story_points` for their "Done" tickets |
-| Velocity (SP/day) | `SP Completed / Man-days` |
-| Completion | `Done tickets / Total tickets (%)` |
+- **File:** `sprint_burndown_<sprint>.png` (name unchanged for scripts).
+- **Content:** Stacked bars = hours per **working day**, per **included** author, from worklogs on **Parent + Standalone** keys only (same rules as the chart data in `sprint_report.py`).
+- **Subtitle:** States that burndown / remaining work is under development.
 
 ---
 
-## 7. Carried-Over Closed Tickets (Excluded)
+## Config fields used today
 
-Lists tickets that were closed **before the sprint started** and are excluded from all calculations.
-
-| Column | Source |
-|--------|--------|
-| Ticket | Jira issue key |
-| Assignee | Jira assignee |
-| Estimate | Jira `timetracking.original_estimate` |
-| Summary | First 55 chars of issue summary |
-
-**Detection logic (in order):**
-1. If `resolution_date` exists and is before `sprint_start` → excluded
-2. Fallback: if status is "Done"/"Closed" AND zero in-sprint worklogs AND has pre-sprint worklogs → excluded
-
-**Impact:** These tickets are completely removed from:
-- Planned vs Logged Work
-- Per-Ticket Details
-- Status Distribution
-- Sprint Completion Rate
-- Sprint Velocity
-- Burndown Chart
-- Daily Log Gaps
+| Field | Effect |
+|-------|--------|
+| Sprint Name | Matches Jira sprint |
+| Report Date | Caps daily table, validation window, and chart |
+| Team Members (Include Yes/No) | Who appears in hours table, gaps, and chart |
+| Tickets to Exclude | Issues skipped entirely |
+| Other config sections | Parsed but not used for metrics in this mode |
 
 ---
 
-## 8. Sprint Health Summary
+## JSON expectations
 
-A consolidated view of key sprint health indicators.
+- `issues[]`: `key`, `type` (`Parent` / `Sub-task` / `Standalone`), `assignee`, `summary`, `parent_key`, optional `remaining_estimate_hours` / `remaining_estimate_raw`
+- `worklogs[key]`: `{ started, seconds, author }` for **every** sprint issue key (including parents and sub-tasks)
 
-| Metric | Calculation |
-|--------|-------------|
-| Team utilization | `total_logged / total_capacity × 100%` |
-| Plan adherence | `total_logged / total_planned × 100%` |
-| Sprint completion rate | Same as section 6a |
-| Sprint velocity | Same as section 6b |
-| Carried-over closed | Count of excluded pre-sprint tickets |
-| Tickets closed | `Done / total active tickets (%)` |
-| Tickets closed+review | `(Done + In Review) / total (%)` |
-| Unstarted (with planned hours) | Tickets with `planned_hours > 0` but `in_sprint_logged == 0` |
-| Overcommitted members | Members where `total_planned > capacity × 1.05` |
-
----
-
-## 9. Burndown Chart (PNG)
-
-Two-panel chart saved as `sprint_burndown_{name}.png`.
-
-### Top Panel: Remaining Work Burndown
-
-| Element | Calculation |
-|---------|-------------|
-| Ideal Burndown (dashed line) | Linear from `total_planned_hours` to 0 across working days |
-| Actual Remaining (solid line) | `total_planned - cumulative_logged` per working day |
-| Today marker | Vertical line at the report date |
-| X-axis | Working days only (Mon–Fri), weekends skipped |
-
-### Bottom Panel: Daily Hours Logged (stacked bars)
-
-| Element | Calculation |
-|---------|-------------|
-| Stacked bars | Per-member logged hours on each working day |
-| Ideal rate (dashed line) | `total_planned_hours / number_of_working_days` |
-| Member colours | Assigned in order from config, colour-blind-friendly palette |
-
-**Data source:** Jira worklogs filtered to sprint date range, included team members only. Carried-over ticket worklogs are excluded.
-
----
-
-## Data Flow Overview
-
-```
-Jira MCP Server ──→ fetch_via_mcp.py ──→ sprint_data_*.json ─┐
-                                                               │
-sprint_report_config.md ───────────────────────────────────────┤
-                                                               │
-                                                               ▼
-                                                      sprint_report.py
-                                                       (orchestrator)
-                                                         │       │
-                                                         ▼       ▼
-                                                report_generator  burndown_chart
-                                                      .py              .py
-                                                         │       │
-                                                         ▼       ▼
-                                              sprint_report_*.md  sprint_burndown_*.png
-```
-
----
-
-## Configuration Reference
-
-All report behaviour is controlled by `sprint_report_config.md`. Key fields:
-
-| Config Field | Affects Sections | Description |
-|-------------|------------------|-------------|
-| `Sprint Name` | All | Identifies the sprint in Jira |
-| `Sprint Duration` | Header, Capacity | Duration in weeks |
-| `Report Date` | Header, Burndown | Cut-off date for data |
-| `Team Members` | All | List of `Name (included/excluded)` |
-| `Planned Leaves` | Capacity | `Name: Xd` |
-| `Other Exclusions` | Capacity | `Name: Xh` for non-sprint work |
-| `Meeting Days Reserved` | Capacity | Days per person reserved for ceremonies |
-| `Excluded Tickets` | All | Ticket keys to skip entirely |
-| `Exclude Parent Estimates` | Planned vs Logged, Velocity | Whether parent issues count |
-| `Show Per-Ticket Details` | Per-Ticket Details | Toggle section on/off |
-| `Show Daily Log Gaps` | Daily Log Gaps | Toggle section on/off |
-
----
-
-## How to Extend the Report
-
-### Adding a new field to an existing section
-
-1. If the data comes from Jira, update `fetch_via_mcp.py`:
-   - Add the field to the `fields` parameter in `jira_get_sprint_issues` call
-   - Extract it in `convert_issue()`
-2. Add the field to `TicketReport` dataclass in `report_generator.py`
-3. Populate it in `build_person_reports()`
-4. Display it in `generate_text_report()` at the desired location
-5. **Update this doc:** run `python sprint_report.py --generate-format` and update `_FORMAT_TEXT` in `report_format.py`
-
-### Adding a new section
-
-1. Add a new block in `generate_text_report()` (follow the pattern of existing sections)
-2. If it needs config toggles, add the field to `config_parser.py` → `SprintConfig`
-3. Update `sprint_report_config.md` with the new option
-4. Update the format text in `report_format.py`
-
-### Adding a new data source
-
-1. Create a new fetch script that outputs a JSON file
-2. Pass the JSON path as an argument to `sprint_report.py`
-3. Load and integrate in `generate_text_report()` or as a separate `generate_*_section()` function
-
-### Jira custom fields
-
-Use the MCP tool `jira_search_fields` to find the correct `customfield_XXXXX` ID:
-```bash
-# Via the MCP client in fetch_via_mcp.py:
-client.call_tool('jira_search_fields', {'keyword': 'your field name', 'limit': 10})
-```
-
-The current story points field for this Jira instance is **`customfield_10344`** (returns `{"value": X}`).
 """.lstrip()

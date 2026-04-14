@@ -127,6 +127,7 @@ def convert_issue(raw: dict) -> dict:
     fields = raw.get("fields", {})
     tt = fields.get("timetracking", {}) or {}
     est_raw = tt.get("originalEstimate", "0") or "0"
+    rem_raw = tt.get("remainingEstimate", "0") or "0"
     assignee = fields.get("assignee") or {}
     status = fields.get("status", {})
     parent = fields.get("parent")
@@ -140,6 +141,8 @@ def convert_issue(raw: dict) -> dict:
         "assignee": assignee.get("displayName", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
+        "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
+        "remaining_estimate_raw": rem_raw,
         "parent_key": parent.get("key") if parent else None,
     }
 
@@ -347,7 +350,7 @@ def main():
 
     # ── Fetch worklogs ───────────────────────────────────────────────────
     parent_keys = {i["key"] for i in issues if i["type"] == "Parent"}
-    tickets_to_fetch = [i["key"] for i in issues if i["key"] not in parent_keys]
+    tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
 
     worklogs: dict[str, list[dict]] = {}

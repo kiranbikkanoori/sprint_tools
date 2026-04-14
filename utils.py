@@ -5,6 +5,23 @@ Shared utility functions for sprint report tools.
 from datetime import date, timedelta
 
 
+def worklog_started_date(wl: dict) -> date | None:
+    """
+    Parse YYYY-MM-DD from a worklog's ``started`` field.
+    Returns None if missing or invalid (skips bad Jira/MCP rows safely).
+    """
+    raw = wl.get("started")
+    if not raw:
+        return None
+    s = str(raw).strip()[:10]
+    if len(s) < 10:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
 def parse_jira_time_to_hours(time_str: str) -> float:
     """
     Parse Jira time format (e.g., '1w 2d 4h 30m') to decimal hours.
