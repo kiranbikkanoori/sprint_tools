@@ -11,7 +11,7 @@ def generate_report_format() -> str:
     return _FORMAT_TEXT
 
 
-_FORMAT_TEXT = r"""# Sprint Report — Field Reference (parent worklog model)
+_FORMAT_TEXT = r"""# Sprint Report — Field Reference (story vs task worklog model)
 
 This document describes the current sprint report. Regenerate after changes:
 
@@ -19,7 +19,7 @@ This document describes the current sprint report. Regenerate after changes:
 python sprint_report.py --generate-format -o ./output
 ```
 
-**Code:** `report_generator.py` → `build_parent_work_report()`, `generate_text_report()`  
+**Code:** `report_generator.py` → `build_sprint_work_report()`, `generate_text_report()`  
 **Chart:** `burndown_chart.py` → `generate_burndown_chart()` (stacked hours only; burndown line removed)
 
 ---
@@ -34,12 +34,12 @@ python sprint_report.py --generate-format -o ./output
 
 ---
 
-## Logged Hours by Person — Parent tasks / Standalone tasks
+## Logged Hours by Person — Stories / Tasks (non-story)
 
 Two separate markdown tables with the same date columns:
 
-1. **Parent tasks** — hours from worklogs on **Parent** issues only.
-2. **Standalone tasks** — hours from worklogs on **Standalone** issues only.
+1. **Stories** — Jira issue types **Story**, **User Story**, and **Epic** (case-insensitive), with no parent link (and not classified as Sub-task).
+2. **Tasks (non-story)** — all other **non–sub-task** issue types (e.g. **Task**, **Bug**, **Spike**): log here, not on sub-tasks.
 
 - **Included people:** Team members with **Include in Report = Yes** (name must match Jira worklog author).
 - **Sub-task** worklogs do not appear in these tables (they appear under validation instead).
@@ -50,9 +50,9 @@ Two separate markdown tables with the same date columns:
 
 ---
 
-## Weekdays With Zero Logged Hours (parent + standalone)
+## Weekdays With Zero Logged Hours (stories + tasks)
 
-Weekdays in the report range where an included person logged **nothing on parent or standalone** (combined). Logging only on sub-tasks in that range still shows as a “missing” day for this section.
+Weekdays in the report range where an included person logged **nothing on stories or tasks** (combined). Logging only on sub-tasks in that range still shows as a “missing” day for this section.
 
 ---
 
@@ -77,7 +77,7 @@ Placeholder text only — planned capacity, utilization, velocity, burndown, etc
 ## Chart PNG
 
 - **File:** `sprint_burndown_<sprint>.png` (name unchanged for scripts).
-- **Content:** Stacked bars = hours per **working day**, per **included** author, from worklogs on **Parent + Standalone** keys only (same rules as the chart data in `sprint_report.py`).
+- **Content:** Stacked bars = hours per **working day**, per **included** author, from worklogs on **Story + Task** keys only (same rules as the chart data in `sprint_report.py`).
 - **Subtitle:** States that burndown / remaining work is under development.
 
 ---
@@ -96,7 +96,7 @@ Placeholder text only — planned capacity, utilization, velocity, burndown, etc
 
 ## JSON expectations
 
-- `issues[]`: `key`, `type` (`Parent` / `Sub-task` / `Standalone`), `assignee`, `summary`, `parent_key`, optional `remaining_estimate_hours` / `remaining_estimate_raw`
-- `worklogs[key]`: `{ started, seconds, author }` for **every** sprint issue key (including parents and sub-tasks)
+- `issues[]`: `key`, `type` (`Story` / `Task` / `Sub-task`), `issuetype_name`, `issuetype_subtask`, `has_subtasks`, `assignee`, `summary`, `parent_key`, optional `remaining_estimate_hours` / `remaining_estimate_raw`. Reports use `effective_issue_type()` so **refetch** after tool updates if `issuetype_name` was stuck on `Unknown`.
+- `worklogs[key]`: `{ started, seconds, author }` for **every** sprint issue key (including stories, tasks, and sub-tasks)
 
 """.lstrip()

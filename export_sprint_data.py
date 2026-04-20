@@ -23,7 +23,10 @@ Schema
       "summary": "WIFI Max BSS Idle Implementation",
       "status": "In Review",
       "status_category": "In Progress",
-      "type": "Sub-task",            // "Parent", "Sub-task", or "Standalone"
+      "issuetype_name": "Sub-task",
+      "issuetype_subtask": true,
+      "has_subtasks": false,
+      "type": "Sub-task",            // "Story", "Task", or "Sub-task"
       "assignee": "Hemanth Reddy Narra",
       "estimate_hours": 8.0,
       "estimate_raw": "1d",
@@ -70,19 +73,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from utils import parse_jira_time_to_hours
-
-
-def classify_issue(issue: dict) -> str:
-    """Determine if a Jira issue is a Parent, Sub-task, or Standalone."""
-    has_parent = issue.get("parent") is not None
-    subtasks = issue.get("subtasks", [])
-    has_subtasks = bool(subtasks) and len(subtasks) > 0
-    if has_subtasks and not has_parent:
-        return "Parent"
-    if has_parent:
-        return "Sub-task"
-    return "Standalone"
+from utils import (
+    classify_issue_bucket,
+    extract_issuetype_info,
+    issue_has_subtasks,
+    parse_jira_time_to_hours,
+)
 
 
 def convert_issue(raw: dict) -> dict:
@@ -94,13 +90,24 @@ def convert_issue(raw: dict) -> dict:
     est_raw = tt.get("original_estimate", "0") or "0"
     rem_raw = tt.get("remaining_estimate", "0") or "0"
     assignee_obj = raw.get("assignee") or {}
+    has_parent = raw.get("parent") is not None
+    iname, is_sub = extract_issuetype_info(raw)
+    has_subtasks = issue_has_subtasks(raw)
 
     return {
         "key": raw["key"],
         "summary": raw.get("summary", ""),
         "status": raw.get("status", {}).get("name", "Unknown"),
         "status_category": raw.get("status", {}).get("category", "Unknown"),
-        "type": classify_issue(raw),
+        "issuetype_name": iname or "Unknown",
+        "issuetype_subtask": is_sub,
+        "has_subtasks": has_subtasks,
+        "type": classify_issue_bucket(
+            issuetype_name=iname,
+            has_parent=has_parent,
+            issuetype_is_subtask=is_sub,
+            has_subtasks=has_subtasks,
+        ),
         "assignee": assignee_obj.get("display_name", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
@@ -192,6 +199,9 @@ def write_template(output_path: str | Path) -> Path:
                 "summary": "Example ticket summary",
                 "status": "In Progress",
                 "status_category": "In Progress",
+                "issuetype_name": "Sub-task",
+                "issuetype_subtask": True,
+                "has_subtasks": False,
                 "type": "Sub-task",
                 "assignee": "Jane Doe",
                 "estimate_hours": 16.0,

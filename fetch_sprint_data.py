@@ -54,7 +54,12 @@ from requests.auth import HTTPBasicAuth
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
-from utils import parse_jira_time_to_hours
+from utils import (
+    classify_issue_bucket,
+    extract_issuetype_info,
+    issue_has_subtasks,
+    parse_jira_time_to_hours,
+)
 
 
 # ── Jira REST client ────────────────────────────────────────────────────────
@@ -111,18 +116,6 @@ class JiraClient:
 
 # ── Data conversion ─────────────────────────────────────────────────────────
 
-def classify_issue(raw: dict) -> str:
-    fields = raw.get("fields", {})
-    has_parent = fields.get("parent") is not None
-    subtasks = fields.get("subtasks", [])
-    has_subtasks = bool(subtasks) and len(subtasks) > 0
-    if has_subtasks and not has_parent:
-        return "Parent"
-    if has_parent:
-        return "Sub-task"
-    return "Standalone"
-
-
 def convert_issue(raw: dict) -> dict:
     fields = raw.get("fields", {})
     tt = fields.get("timetracking", {}) or {}
@@ -131,13 +124,24 @@ def convert_issue(raw: dict) -> dict:
     assignee = fields.get("assignee") or {}
     status = fields.get("status", {})
     parent = fields.get("parent")
+    has_parent = parent is not None
+    iname, is_sub = extract_issuetype_info(raw, rest_fields=fields)
+    has_subtasks = issue_has_subtasks(raw, rest_fields=fields)
 
     return {
         "key": raw["key"],
         "summary": fields.get("summary", ""),
         "status": status.get("name", "Unknown"),
         "status_category": status.get("statusCategory", {}).get("name", "Unknown"),
-        "type": classify_issue(raw),
+        "issuetype_name": iname or "Unknown",
+        "issuetype_subtask": is_sub,
+        "has_subtasks": has_subtasks,
+        "type": classify_issue_bucket(
+            issuetype_name=iname,
+            has_parent=has_parent,
+            issuetype_is_subtask=is_sub,
+            has_subtasks=has_subtasks,
+        ),
         "assignee": assignee.get("displayName", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
@@ -349,7 +353,6 @@ def main():
     issues = [convert_issue(i) for i in raw_issues]
 
     # ── Fetch worklogs ───────────────────────────────────────────────────
-    parent_keys = {i["key"] for i in issues if i["type"] == "Parent"}
     tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
 
@@ -378,7 +381,10 @@ def main():
         json.dump(data, f, indent=2, ensure_ascii=False)
 
     print(f"\nSprint data exported to: {output_path}")
-    print(f"Issues: {len(issues)} ({len(parent_keys)} parents, {len(tickets_to_fetch)} sub-tasks/standalone)")
+    story_n = sum(1 for i in issues if i["type"] == "Story")
+    task_n = sum(1 for i in issues if i["type"] == "Task")
+    sub_n = sum(1 for i in issues if i["type"] == "Sub-task")
+    print(f"Issues: {len(issues)} ({story_n} stories, {task_n} tasks, {sub_n} sub-tasks)")
     print(f"Worklogs: {sum(len(v) for v in worklogs.values())} entries across {len(worklogs)} tickets")
     print(f"\nNext step: python sprint_report.py -c {args.config} -d {output_path}")
 

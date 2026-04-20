@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Sprint report CLI — generates a markdown report and a stacked daily-hours chart
-(parent + standalone worklogs only; burndown line not shown).
+(story + task worklogs only; burndown line not shown).
 
 Usage
 -----
@@ -33,7 +33,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
-from report_generator import build_parent_work_report, generate_text_report
+from utils import effective_issue_type
+from report_generator import build_sprint_work_report, generate_text_report
 from report_format import generate_report_format
 
 
@@ -121,13 +122,13 @@ def main():
     chart_keys = {
         i["key"]
         for i in issues
-        if i.get("type") in ("Parent", "Standalone")
+        if effective_issue_type(i) in ("Story", "Task")
         and i.get("key")
         and i["key"] not in excluded_keys
     }
     chart_worklogs = {k: worklogs.get(k, []) for k in chart_keys}
 
-    work_report = build_parent_work_report(
+    work_report = build_sprint_work_report(
         config,
         sprint_start,
         sprint_end,

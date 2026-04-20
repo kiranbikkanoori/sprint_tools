@@ -41,7 +41,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
 from mcp_client import McpClient, find_mcp_config, load_mcp_server_config
-from utils import parse_jira_time_to_hours
+from utils import (
+    classify_issue_bucket,
+    extract_issuetype_info,
+    issue_has_subtasks,
+    parse_jira_time_to_hours,
+)
 
 
 DEFAULT_JIRA_URL = "https://jira.silabs.com"
@@ -138,31 +143,6 @@ def extract_story_points(raw: dict) -> float | None:
     return None
 
 
-def _classify_mcp(issue: dict) -> str:
-    """Classify from MCP response (fields at top level)."""
-    has_parent = issue.get("parent") is not None
-    subtasks = issue.get("subtasks", [])
-    has_subtasks = bool(subtasks) and len(subtasks) > 0
-    if has_subtasks and not has_parent:
-        return "Parent"
-    if has_parent:
-        return "Sub-task"
-    return "Standalone"
-
-
-def _classify_rest(raw: dict) -> str:
-    """Classify from REST response (fields nested under 'fields')."""
-    fields = raw.get("fields", {})
-    has_parent = fields.get("parent") is not None
-    subtasks = fields.get("subtasks", [])
-    has_subtasks = bool(subtasks) and len(subtasks) > 0
-    if has_subtasks and not has_parent:
-        return "Parent"
-    if has_parent:
-        return "Sub-task"
-    return "Standalone"
-
-
 def convert_issue_mcp(raw: dict) -> dict:
     """Convert an issue from MCP gateway response (fields at top level)."""
     tt = raw.get("timetracking", {}) or {}
@@ -175,12 +155,23 @@ def convert_issue_mcp(raw: dict) -> dict:
     if isinstance(resolution_date, str):
         resolution_date = resolution_date[:10]
 
+    has_parent = raw.get("parent") is not None
+    iname, is_sub = extract_issuetype_info(raw)
+    has_subtasks = issue_has_subtasks(raw)
     return {
         "key": raw["key"],
         "summary": raw.get("summary", ""),
         "status": status.get("name", "Unknown"),
         "status_category": status.get("category", "Unknown"),
-        "type": _classify_mcp(raw),
+        "issuetype_name": iname or "Unknown",
+        "issuetype_subtask": is_sub,
+        "has_subtasks": has_subtasks,
+        "type": classify_issue_bucket(
+            issuetype_name=iname,
+            has_parent=has_parent,
+            issuetype_is_subtask=is_sub,
+            has_subtasks=has_subtasks,
+        ),
         "assignee": assignee.get("display_name", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
@@ -206,12 +197,23 @@ def convert_issue_rest(raw: dict) -> dict:
     if isinstance(resolution_date, str):
         resolution_date = resolution_date[:10]
 
+    has_parent = parent is not None
+    iname, is_sub = extract_issuetype_info(raw, rest_fields=fields)
+    has_subtasks = issue_has_subtasks(raw, rest_fields=fields)
     return {
         "key": raw["key"],
         "summary": fields.get("summary", ""),
         "status": status.get("name", "Unknown"),
         "status_category": status.get("statusCategory", {}).get("name", "Unknown"),
-        "type": _classify_rest(raw),
+        "issuetype_name": iname or "Unknown",
+        "issuetype_subtask": is_sub,
+        "has_subtasks": has_subtasks,
+        "type": classify_issue_bucket(
+            issuetype_name=iname,
+            has_parent=has_parent,
+            issuetype_is_subtask=is_sub,
+            has_subtasks=has_subtasks,
+        ),
         "assignee": assignee.get("displayName", "Unassigned"),
         "estimate_hours": parse_jira_time_to_hours(est_raw),
         "estimate_raw": est_raw,
@@ -530,7 +532,6 @@ def fetch_via_mcp(
     print(" done.")
 
     issues = [convert_issue_mcp(i) for i in all_raw_issues]
-    parent_keys = {i["key"] for i in issues if i["type"] == "Parent"}
 
     tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
@@ -543,7 +544,7 @@ def fetch_via_mcp(
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
 
-    _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
+    _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, tickets_to_fetch, output_path)
 
 
 # ── Fetch via direct REST ───────────────────────────────────────────────────
@@ -578,7 +579,6 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
     print(f" {len(all_raw_issues)} done.")
 
     issues = [convert_issue_rest(i) for i in all_raw_issues]
-    parent_keys = {i["key"] for i in issues if i["type"] == "Parent"}
 
     tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
@@ -590,12 +590,12 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
 
-    _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path)
+    _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, tickets_to_fetch, output_path)
 
 
 # ── Shared output ───────────────────────────────────────────────────────────
 
-def _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, parent_keys, tickets_to_fetch, output_path):
+def _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, tickets_to_fetch, output_path):
     data = {
         "sprint": {
             "name": sprint_name,
@@ -609,8 +609,11 @@ def _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, par
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
+    story_n = sum(1 for i in issues if i["type"] == "Story")
+    task_n = sum(1 for i in issues if i["type"] == "Task")
+    sub_n = sum(1 for i in issues if i["type"] == "Sub-task")
     print(f"\nSprint data exported to: {output_path}")
-    print(f"Issues: {len(issues)} ({len(parent_keys)} parents, {len(tickets_to_fetch)} sub-tasks/standalone)")
+    print(f"Issues: {len(issues)} ({story_n} stories, {task_n} tasks, {sub_n} sub-tasks)")
     print(f"Worklogs: {sum(len(v) for v in worklogs.values())} entries")
 
 

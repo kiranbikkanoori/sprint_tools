@@ -71,12 +71,12 @@ def generate_burndown_chart(
     total_remaining_hours: float | None = None,
 ) -> Path:
     """
-    Save a PNG with stacked daily logged hours (Parent + Standalone worklogs only).
+    Save a PNG with stacked daily logged hours (Story + Task issue worklogs only).
 
     ``total_planned_hours`` and ``total_remaining_hours`` are accepted for backward
     compatibility with older callers; they are ignored.
 
-    ``worklogs`` should already be restricted to Parent and Standalone issue keys.
+    ``worklogs`` should already be restricted to Story and Task issue keys.
     Hours are credited to the worklog author when the author is in ``member_names``.
     """
     _ = (total_planned_hours, total_remaining_hours)
@@ -167,7 +167,7 @@ def generate_burndown_chart(
             label="Report date",
         )
 
-    ax.set_ylabel("Hours logged (parent + standalone)")
+    ax.set_ylabel("Hours logged (stories + tasks)")
     ax.set_xlabel("Sprint day (working days)")
     ax.legend(loc="upper left", fontsize=9, ncol=min(4, len(member_names) + 1))
 

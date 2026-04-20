@@ -1,8 +1,8 @@
 """
-Text report generator — parent-first worklogging model.
+Text report generator — story vs task worklogging model.
 
-Logged hours for reporting come only from Parent and Standalone issues (by worklog
-author). Sub-task worklogs and non-zero remaining on sub-tasks are validation errors.
+Logged hours for reporting come from **Story** and **Task** Jira issue types (by worklog
+author). **Sub-task** worklogs and non-zero remaining on sub-tasks are validation errors.
 """
 
 from __future__ import annotations
@@ -12,7 +12,13 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from config_parser import SprintConfig
-from utils import hours_to_jira, parse_jira_time_to_hours, worklog_started_date, working_dates_in_range
+from utils import (
+    effective_issue_type,
+    hours_to_jira,
+    parse_jira_time_to_hours,
+    worklog_started_date,
+    working_dates_in_range,
+)
 
 
 @dataclass
@@ -35,12 +41,12 @@ class ChildWorklogError:
 
 
 @dataclass
-class ParentWorkReport:
-    """Per-person parent vs standalone hours per calendar day (sprint window)."""
+class SprintWorkReport:
+    """Per-person story vs task hours per calendar day (sprint window)."""
 
     included_names: list[str]
-    # person -> date -> {"parent": h, "standalone": h}
-    daily_parent_standalone: dict[str, dict[date, dict[str, float]]] = field(default_factory=dict)
+    # person -> date -> {"story": h, "task": h}
+    daily_story_task: dict[str, dict[date, dict[str, float]]] = field(default_factory=dict)
     errors_child_remaining: list[ChildRemainingError] = field(default_factory=list)
     errors_child_worklogs: list[ChildWorklogError] = field(default_factory=list)
 
@@ -61,22 +67,22 @@ def _issue_remaining_hours(issue: dict) -> float:
     return 0.0
 
 
-def build_parent_work_report(
+def build_sprint_work_report(
     config: SprintConfig,
     sprint_start: date,
     sprint_end: date,
     issues: list[dict],
     worklogs: dict[str, list[dict]],
     report_date: date | None = None,
-) -> ParentWorkReport:
+) -> SprintWorkReport:
     """
-    Build daily parent/standalone hours for included members, and child validation errors.
+    Build daily story/task hours for included members, and sub-task validation errors.
 
     Worklogs counted for the daily matrix use dates in [sprint_start, log_end] inclusive,
     where log_end = min(sprint_end, report_date or sprint_end).
 
-    Child worklog errors use the same date window. Only included authors count toward
-    parent/standalone totals; child error lists include all authors.
+    Sub-task worklog errors use the same date window. Only included authors count toward
+    story/task totals; sub-task error lists include all authors.
     """
     excluded = set(config.excluded_tickets)
     included = [m.name for m in config.team_members if m.included]
@@ -86,7 +92,7 @@ def build_parent_work_report(
     by_key = {i["key"]: i for i in issues}
 
     daily: dict[str, dict[date, dict[str, float]]] = {
-        name: defaultdict(lambda: {"parent": 0.0, "standalone": 0.0}) for name in included
+        name: defaultdict(lambda: {"story": 0.0, "task": 0.0}) for name in included
     }
 
     errors_remaining: list[ChildRemainingError] = []
@@ -97,7 +103,7 @@ def build_parent_work_report(
         key = issue["key"]
         if key in excluded:
             continue
-        itype = issue.get("type") or "Standalone"
+        itype = effective_issue_type(issue)
         rem = _issue_remaining_hours(issue)
 
         if itype == "Sub-task" and rem > 1e-6:
@@ -125,10 +131,10 @@ def build_parent_work_report(
                 child_wl_accum[key][author] += hrs
             continue
 
-        if itype not in ("Parent", "Standalone"):
+        if itype not in ("Story", "Task"):
             continue
 
-        bucket = "parent" if itype == "Parent" else "standalone"
+        bucket = "story" if itype == "Story" else "task"
         for wl in wl_list:
             wl_date = worklog_started_date(wl)
             if wl_date is None:
@@ -163,13 +169,13 @@ def build_parent_work_report(
     daily_out: dict[str, dict[date, dict[str, float]]] = {}
     for name in included:
         daily_out[name] = {
-            d: {"parent": v["parent"], "standalone": v["standalone"]}
+            d: {"story": v["story"], "task": v["task"]}
             for d, v in sorted(daily[name].items())
         }
 
-    return ParentWorkReport(
+    return SprintWorkReport(
         included_names=included,
-        daily_parent_standalone=daily_out,
+        daily_story_task=daily_out,
         errors_child_remaining=sorted(errors_remaining, key=lambda e: e.key),
         errors_child_worklogs=errors_wl,
     )
@@ -179,10 +185,10 @@ def generate_text_report(
     config: SprintConfig,
     sprint_start: date,
     sprint_end: date,
-    work_report: ParentWorkReport,
+    work_report: SprintWorkReport,
     sprint_goal: str = "",
 ) -> str:
-    """Return markdown sprint report (parent logging model)."""
+    """Return markdown sprint report (story vs task logging model)."""
     all_dates = working_dates_in_range(sprint_start, sprint_end)
     report_cap = _log_window_end(
         sprint_end,
@@ -214,7 +220,7 @@ def generate_text_report(
         "> **Worklog source:** By **worklog author**, for team members with **Include in Report = Yes**. "
         f"Columns are **weekdays** in **[{sprint_start.isoformat()}, {report_cap.isoformat()}]** "
         f"(inclusive). {report_asof_note} "
-        "Parent vs standalone hours are in **two tables** below; each table ends with a **team total** row."
+        "**Stories** vs **tasks** (non-story issue types) are in **two tables** below; each ends with a **team total** row."
     )
     ln()
 
@@ -240,9 +246,9 @@ def generate_text_report(
         for name in work_report.included_names:
             row = f"| {name} |"
             person_tot = 0.0
-            pdata = work_report.daily_parent_standalone.get(name, {})
+            pdata = work_report.daily_story_task.get(name, {})
             for j, d in enumerate(display_dates):
-                cell = pdata.get(d, {"parent": 0.0, "standalone": 0.0})
+                cell = pdata.get(d, {"story": 0.0, "task": 0.0})
                 h = cell[bucket]
                 col_totals[j] += h
                 person_tot += h
@@ -258,23 +264,23 @@ def generate_text_report(
         ln()
 
     _emit_hours_table(
-        "## Logged Hours by Person — Parent tasks",
-        "parent",
-        "Total (parent)",
+        "## Logged Hours by Person — Stories",
+        "story",
+        "Total (stories)",
     )
     _emit_hours_table(
-        "## Logged Hours by Person — Standalone tasks",
-        "standalone",
-        "Total (standalone)",
+        "## Logged Hours by Person — Tasks (non-story)",
+        "task",
+        "Total (tasks)",
     )
 
-    # ── Daily log gaps (no parent/standalone hours on a weekday) ─────
+    # ── Daily log gaps (no story/task hours on a weekday) ─────
     ln("---")
-    ln("## Weekdays With Zero Logged Hours (parent + standalone)")
+    ln("## Weekdays With Zero Logged Hours (stories + tasks)")
     ln()
     ln(
         "For each included person, this lists **weekdays in the same date range as the tables above** "
-        "where **no time was logged** on either **parent** or **standalone** issues "
+        "where **no time was logged** on either **stories** or **tasks** "
         "(combined). It is a quick hygiene check, not an error list; same-day logging only on "
         "sub-tasks still counts as “missing” here because those hours are excluded from the tables."
     )
@@ -282,11 +288,11 @@ def generate_text_report(
     ln("| Name | Missing Days | Dates |")
     ln("|---|---|---|")
     for name in work_report.included_names:
-        pdata = work_report.daily_parent_standalone.get(name, {})
+        pdata = work_report.daily_story_task.get(name, {})
         missing = []
         for d in display_dates:
-            cell = pdata.get(d, {"parent": 0.0, "standalone": 0.0})
-            if cell["parent"] + cell["standalone"] < 1e-6:
+            cell = pdata.get(d, {"story": 0.0, "task": 0.0})
+            if cell["story"] + cell["task"] < 1e-6:
                 missing.append(d)
         if missing:
             date_strs = ", ".join(d.strftime("%b %d (%a)") for d in missing)
@@ -317,7 +323,7 @@ def generate_text_report(
     ln()
     ln(
         f"Worklog entries with start date in **[{sprint_start.isoformat()}, {report_cap.isoformat()}]** "
-        "on sub-task issues (should be empty when logging only on parents)."
+        "on sub-task issues (should be empty when logging only on stories / tasks)."
     )
     ln()
     if not work_report.errors_child_worklogs:

@@ -401,6 +401,9 @@ The intermediate JSON file (`sprint_data_*.json`) has this structure:
       "summary": "Ticket title",
       "status": "In Progress",
       "status_category": "In Progress",
+      "issuetype_name": "Sub-task",
+      "issuetype_subtask": true,
+      "has_subtasks": false,
       "type": "Sub-task",
       "assignee": "Jane Doe",
       "estimate_hours": 16.0,
@@ -421,6 +424,8 @@ The intermediate JSON file (`sprint_data_*.json`) has this structure:
   }
 }
 ```
+
+`type` is **`Story`**, **`Task`**, or **`Sub-task`**, derived from Jira **issue type** and **parent** link (see `utils.classify_issue_bucket`). Older JSON may still say `Parent` / `Standalone`; the report normalizes those to Story / Task.
 
 To generate a blank template:
 ```bash

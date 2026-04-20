@@ -27,7 +27,7 @@ These capabilities are **not** implemented in the current report generator (or o
 
 ## Sprint Details
 
-- **Sprint Name**: `Wi-Fi_LMAC_2026_7`
+- **Sprint Name**: `Wi-Fi_LMAC_2026_8`
 - **Sprint Duration (weeks)**: `2`
 
 ---
@@ -54,7 +54,7 @@ List all active sprint members below. Remove or comment out anyone who should be
 
 ### Time Reserved for Meetings/Ceremonies (per person per sprint)
 
-- **Days reserved**: `1`
+- **Days reserved**: `2`
 
 > This is deducted from each person's capacity. For a 2-week sprint with 1d reserved, effective capacity = 9d (72h) per person.
 
