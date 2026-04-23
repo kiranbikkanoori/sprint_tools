@@ -47,6 +47,10 @@ class SprintWorkReport:
     included_names: list[str]
     # person -> date -> {"story": h, "task": h}
     daily_story_task: dict[str, dict[date, dict[str, float]]] = field(default_factory=dict)
+    # person -> date -> "story" | "task" -> issue_key -> hours (same window as daily_story_task)
+    daily_ticket_hours: dict[str, dict[date, dict[str, dict[str, float]]]] = field(
+        default_factory=dict
+    )
     errors_child_remaining: list[ChildRemainingError] = field(default_factory=list)
     errors_child_worklogs: list[ChildWorklogError] = field(default_factory=list)
 
@@ -89,10 +93,14 @@ def build_sprint_work_report(
     included_set = set(included)
     log_end = _log_window_end(sprint_end, report_date)
 
-    by_key = {i["key"]: i for i in issues}
-
     daily: dict[str, dict[date, dict[str, float]]] = {
         name: defaultdict(lambda: {"story": 0.0, "task": 0.0}) for name in included
+    }
+    detail: dict[str, dict[date, dict[str, dict[str, float]]]] = {
+        name: defaultdict(
+            lambda: {"story": defaultdict(float), "task": defaultdict(float)}
+        )
+        for name in included
     }
 
     errors_remaining: list[ChildRemainingError] = []
@@ -146,6 +154,7 @@ def build_sprint_work_report(
                 continue
             hrs = wl["seconds"] / 3600.0
             daily[author][wl_date][bucket] += hrs
+            detail[author][wl_date][bucket][key] += hrs
 
     errors_wl: list[ChildWorklogError] = []
     for ckey, by_author in child_wl_accum.items():
@@ -167,18 +176,49 @@ def build_sprint_work_report(
 
     # Normalize inner dicts from defaultdict to plain dict for iteration
     daily_out: dict[str, dict[date, dict[str, float]]] = {}
+    detail_out: dict[str, dict[date, dict[str, dict[str, float]]]] = {}
     for name in included:
         daily_out[name] = {
             d: {"story": v["story"], "task": v["task"]}
             for d, v in sorted(daily[name].items())
         }
+        detail_out[name] = {}
+        for d, buckets in sorted(detail[name].items()):
+            detail_out[name][d] = {
+                "story": dict(buckets["story"]),
+                "task": dict(buckets["task"]),
+            }
 
     return SprintWorkReport(
         included_names=included,
         daily_story_task=daily_out,
+        daily_ticket_hours=detail_out,
         errors_child_remaining=sorted(errors_remaining, key=lambda e: e.key),
         errors_child_worklogs=errors_wl,
     )
+
+
+def _format_day_cell(
+    total_h: float,
+    ticket_hours: dict[str, float],
+    *,
+    max_tickets: int = 14,
+) -> str:
+    """
+    One table cell: bold total plus HTML line breaks and a bullet per ticket
+    (issue key + hours only). Uses ``<br>`` for multi-line cells.
+    """
+    if total_h < 1e-6 and not ticket_hours:
+        return "0.0"
+    lines: list[str] = [f"**{total_h:.1f}**"]
+    items = sorted(ticket_hours.items(), key=lambda x: (-x[1], x[0]))
+    positive = [(k, h) for k, h in items if h >= 1e-6]
+    for idx, (key, hrs) in enumerate(positive):
+        if idx >= max_tickets:
+            lines.append(f"• *…and {len(positive) - max_tickets} more*")
+            break
+        lines.append(f"• `{key}` {hrs:.1f}h")
+    return "<br>".join(lines)
 
 
 def generate_text_report(
@@ -220,7 +260,8 @@ def generate_text_report(
         "> **Worklog source:** By **worklog author**, for team members with **Include in Report = Yes**. "
         f"Columns are **weekdays** in **[{sprint_start.isoformat()}, {report_cap.isoformat()}]** "
         f"(inclusive). {report_asof_note} "
-        "**Stories** vs **tasks** (non-story issue types) are in **two tables** below; each ends with a **team total** row."
+        "**Stories** vs **tasks** (non-story issue types) are in **two tables** below; each ends with a **team total** row. "
+        "Each person/day cell lists **issue keys** (e.g. RSCDEV-1234) and hours under the daily total."
     )
     ln()
 
@@ -243,6 +284,7 @@ def generate_text_report(
         ln(sep)
         col_totals = [0.0] * len(display_dates)
         team_sum = 0.0
+        tdetails = work_report.daily_ticket_hours
         for name in work_report.included_names:
             row = f"| {name} |"
             person_tot = 0.0
@@ -252,7 +294,9 @@ def generate_text_report(
                 h = cell[bucket]
                 col_totals[j] += h
                 person_tot += h
-                row += f" {h:.1f} |"
+                tickets_for_cell = tdetails.get(name, {}).get(d, {}).get(bucket, {})
+                cell_html = _format_day_cell(h, tickets_for_cell)
+                row += f" {cell_html} |"
             team_sum += person_tot
             row += f" **{person_tot:.1f}** |"
             ln(row)
