@@ -45,6 +45,7 @@ from utils import (
     classify_issue_bucket,
     extract_issuetype_info,
     issue_has_subtasks,
+    jira_issue_is_rest_api_shape,
     parse_jira_time_to_hours,
 )
 
@@ -223,6 +224,13 @@ def convert_issue_rest(raw: dict) -> dict:
         "resolution_date": resolution_date,
         "parent_key": parent.get("key") if parent else None,
     }
+
+
+def convert_issue_auto(raw: dict) -> dict:
+    """Use REST or flattened MCP mapping depending on how Jira/MCP returned the issue."""
+    if jira_issue_is_rest_api_shape(raw):
+        return convert_issue_rest(raw)
+    return convert_issue_mcp(raw)
 
 
 def convert_worklog_mcp(wl: dict) -> dict:
@@ -531,7 +539,7 @@ def fetch_via_mcp(
         start_at += len(issues_batch)
     print(" done.")
 
-    issues = [convert_issue_mcp(i) for i in all_raw_issues]
+    issues = [convert_issue_auto(i) for i in all_raw_issues]
 
     tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)

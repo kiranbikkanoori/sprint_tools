@@ -73,48 +73,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from utils import (
-    classify_issue_bucket,
-    extract_issuetype_info,
-    issue_has_subtasks,
-    parse_jira_time_to_hours,
-)
-
 
 def convert_issue(raw: dict) -> dict:
     """
     Convert a raw Jira issue (as returned by MCP jira_get_sprint_issues)
     into the portable schema.
     """
-    tt = raw.get("timetracking", {}) or {}
-    est_raw = tt.get("original_estimate", "0") or "0"
-    rem_raw = tt.get("remaining_estimate", "0") or "0"
-    assignee_obj = raw.get("assignee") or {}
-    has_parent = raw.get("parent") is not None
-    iname, is_sub = extract_issuetype_info(raw)
-    has_subtasks = issue_has_subtasks(raw)
+    from fetch_via_mcp import convert_issue_auto
 
-    return {
-        "key": raw["key"],
-        "summary": raw.get("summary", ""),
-        "status": raw.get("status", {}).get("name", "Unknown"),
-        "status_category": raw.get("status", {}).get("category", "Unknown"),
-        "issuetype_name": iname or "Unknown",
-        "issuetype_subtask": is_sub,
-        "has_subtasks": has_subtasks,
-        "type": classify_issue_bucket(
-            issuetype_name=iname,
-            has_parent=has_parent,
-            issuetype_is_subtask=is_sub,
-            has_subtasks=has_subtasks,
-        ),
-        "assignee": assignee_obj.get("display_name", "Unassigned"),
-        "estimate_hours": parse_jira_time_to_hours(est_raw),
-        "estimate_raw": est_raw,
-        "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
-        "remaining_estimate_raw": rem_raw,
-        "parent_key": (raw.get("parent") or {}).get("key"),
-    }
+    return convert_issue_auto(raw)
 
 
 def convert_worklogs(raw_worklogs: dict[str, dict]) -> dict[str, list[dict]]:

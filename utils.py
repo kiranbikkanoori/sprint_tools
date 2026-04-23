@@ -19,6 +19,76 @@ ISSUE_TYPE_STORY_NAMES = frozenset({
     "change request",
 })
 
+# Jira project keys where story points are often set on **non-story** types (e.g. Bug).
+# When ``issuetype_name`` is missing, we must not infer Story from SP alone for these.
+_STORY_POINT_INFER_STORY_EXCLUDE_PROJECTS = frozenset({
+    "SI91X",
+})
+
+
+def jira_project_key(issue: dict) -> str:
+    """Return the Jira project key from ``issue['key']`` (e.g. ``RSCDEV`` from ``RSCDEV-45111``)."""
+    k = (issue.get("key") or "").strip()
+    if "-" in k:
+        return k.split("-", 1)[0].upper()
+    return ""
+
+
+def _get_dict_ci(d: dict, *keys: str):
+    """Return ``d[k]`` for the first key in ``keys`` that matches ignoring case."""
+    if not isinstance(d, dict) or not keys:
+        return None
+    lower = {str(k).lower(): k for k in d}
+    for want in keys:
+        orig = lower.get(want.lower())
+        if orig is not None:
+            return d[orig]
+    return None
+
+
+def _coerce_issuetype_value(it) -> tuple[str, bool] | None:
+    """Parse Jira/MCP issuetype payload to ``(name, is_subtask)`` or ``None``."""
+    if it is None:
+        return None
+    if isinstance(it, str) and it.strip():
+        return it.strip(), False
+    if isinstance(it, dict):
+        name = str(
+            it.get("name")
+            or it.get("Name")
+            or it.get("displayName")
+            or it.get("display_name")
+            or ""
+        ).strip()
+        sub = it.get("subtask")
+        is_sub = bool(sub) if sub is not None else False
+        if name:
+            return name, is_sub
+    return None
+
+
+def _issuetype_from_fields_dict(fields: dict) -> tuple[str, bool] | None:
+    """Best-effort issuetype from a Jira ``fields`` object (handles odd key casing)."""
+    if not isinstance(fields, dict):
+        return None
+    for key in ("issuetype", "issueType", "issue_type", "IssueType"):
+        coerced = _coerce_issuetype_value(fields.get(key))
+        if coerced and coerced[0]:
+            return coerced
+    it = _get_dict_ci(fields, "issuetype", "issueType", "issue_type")
+    coerced = _coerce_issuetype_value(it)
+    if coerced and coerced[0]:
+        return coerced
+    # Rare: only non-canonical key names
+    for fk, fv in fields.items():
+        if not isinstance(fk, str):
+            continue
+        if fk.lower().replace("_", "") == "issuetype":
+            coerced = _coerce_issuetype_value(fv)
+            if coerced and coerced[0]:
+                return coerced
+    return None
+
 
 def extract_issuetype_info(raw: dict, *, rest_fields: dict | None = None) -> tuple[str, bool]:
     """
@@ -28,10 +98,16 @@ def extract_issuetype_info(raw: dict, *, rest_fields: dict | None = None) -> tup
     """
     it = None
     if rest_fields is not None:
+        parsed = _issuetype_from_fields_dict(rest_fields)
+        if parsed:
+            return parsed
         it = rest_fields.get("issuetype") or rest_fields.get("issueType")
     else:
         fields = raw.get("fields")
         if isinstance(fields, dict):
+            parsed = _issuetype_from_fields_dict(fields)
+            if parsed:
+                return parsed
             it = fields.get("issuetype") or fields.get("issueType")
         if it is None:
             it = (
@@ -40,8 +116,17 @@ def extract_issuetype_info(raw: dict, *, rest_fields: dict | None = None) -> tup
                 or raw.get("issue_type")
                 or raw.get("issueTypeName")
             )
+    coerced = _coerce_issuetype_value(it)
+    if coerced and coerced[0]:
+        return coerced
     if isinstance(it, dict):
-        name = str(it.get("name") or it.get("Name") or "").strip()
+        name = str(
+            it.get("name")
+            or it.get("Name")
+            or it.get("displayName")
+            or it.get("display_name")
+            or ""
+        ).strip()
         sub = it.get("subtask")
         is_sub = bool(sub) if sub is not None else False
         return name, is_sub
@@ -61,6 +146,19 @@ def extract_issuetype_info(raw: dict, *, rest_fields: dict | None = None) -> tup
             if isinstance(alt, str) and alt.strip():
                 return alt.strip(), False
     return "", False
+
+
+def jira_issue_is_rest_api_shape(raw: dict) -> bool:
+    """
+    True if ``raw`` looks like a Jira REST issue (e.g. ``/rest/agile/.../issue``):
+    core fields live under ``fields``, not flattened to the top level.
+    """
+    fields = raw.get("fields")
+    if not isinstance(fields, dict):
+        return False
+    if (raw.get("summary") or "").strip():
+        return False
+    return _get_dict_ci(fields, "summary") is not None
 
 
 def extract_issuetype_name(raw: dict, *, rest_fields: dict | None = None) -> str:
@@ -147,6 +245,8 @@ def effective_issue_type(issue: dict) -> str:
     )
     # MCP sometimes omits issuetype entirely: many Silabs backlog items use story points only on stories.
     if base == "Task" and not has_parent and not is_sub:
+        if jira_project_key(issue) in _STORY_POINT_INFER_STORY_EXCLUDE_PROJECTS:
+            return base
         sp = issue.get("story_points")
         try:
             sp_val = float(sp) if sp is not None else 0.0
