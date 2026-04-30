@@ -93,11 +93,27 @@ class JiraRestClient:
         return data.get("values", [])
 
     def get_sprints(self, board_id: int, state: str | None = None) -> list[dict]:
-        params = {"maxResults": 50}
-        if state:
-            params["state"] = state
-        data = self._get(f"/rest/agile/1.0/board/{board_id}/sprint", params)
-        return data.get("values", [])
+        """All sprints on the board (paginated). Required to find older *closed* sprints."""
+        all_sprints: list[dict] = []
+        start_at = 0
+        page = 50
+        while True:
+            params: dict = {"startAt": start_at, "maxResults": page}
+            if state:
+                params["state"] = state
+            data = self._get(f"/rest/agile/1.0/board/{board_id}/sprint", params)
+            batch = data.get("values", [])
+            all_sprints.extend(batch)
+            if not batch:
+                break
+            total = data.get("total")
+            if total is not None:
+                if start_at + len(batch) >= int(total):
+                    break
+            elif data.get("isLast") is True or len(batch) < page:
+                break
+            start_at += len(batch)
+        return all_sprints
 
     def get_sprint_issues(self, sprint_id: int, fields: str = SPRINT_FIELDS_REST) -> list[dict]:
         all_issues = []
@@ -393,12 +409,43 @@ def find_sprint_by_name_mcp(client: McpClient, sprint_name: str) -> dict | None:
     return None
 
 
+def _get_sprints_from_board_mcp(client: McpClient, board_id: str, state: str) -> list[dict]:
+    """Paginate MCP sprint listing when the server supports ``startAt``; else first page only."""
+    out: list[dict] = []
+    start = 0
+    limit = 50
+    seen: set[str | int] = set()
+    for _ in range(500):
+        payload = {
+            "board_id": str(board_id),
+            "state": state,
+            "limit": limit,
+            "startAt": start,
+        }
+        sprints = client.call_tool("jira_get_sprints_from_board", payload)
+        if isinstance(sprints, dict):
+            sprints = sprints.get("sprints") or sprints.get("values") or []
+        if not sprints:
+            break
+        new_count = 0
+        for s in sprints:
+            sid = s.get("id")
+            if sid is not None and sid not in seen:
+                seen.add(sid)
+                out.append(s)
+                new_count += 1
+        if new_count == 0:
+            break
+        if len(sprints) < limit:
+            break
+        start += len(sprints)
+    return out
+
+
 def find_sprint_on_board_mcp(client: McpClient, board_id: str, sprint_name: str) -> dict | None:
     all_found = []
     for state in ["active", "future", "closed"]:
-        sprints = client.call_tool("jira_get_sprints_from_board", {
-            "board_id": str(board_id), "state": state, "limit": 50,
-        })
+        sprints = _get_sprints_from_board_mcp(client, board_id, state)
         if not sprints:
             continue
         for s in sprints:

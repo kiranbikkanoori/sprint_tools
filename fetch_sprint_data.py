@@ -84,12 +84,31 @@ class JiraClient:
         return data.get("values", [])
 
     def get_sprints(self, board_id: int, state: str | None = None) -> list[dict]:
-        """Get sprints from a board, optionally filtered by state."""
-        params = {"maxResults": 50}
-        if state:
-            params["state"] = state
-        data = self._get(f"/rest/agile/1.0/board/{board_id}/sprint", params)
-        return data.get("values", [])
+        """Get sprints from a board, optionally filtered by state (paginated).
+
+        Jira returns at most ``maxResults`` sprints per request; boards with many
+        *closed* sprints require pagination or older completed sprints are missing.
+        """
+        all_sprints: list[dict] = []
+        start_at = 0
+        page = 50
+        while True:
+            params: dict = {"startAt": start_at, "maxResults": page}
+            if state:
+                params["state"] = state
+            data = self._get(f"/rest/agile/1.0/board/{board_id}/sprint", params)
+            batch = data.get("values", [])
+            all_sprints.extend(batch)
+            if not batch:
+                break
+            total = data.get("total")
+            if total is not None:
+                if start_at + len(batch) >= int(total):
+                    break
+            elif data.get("isLast") is True or len(batch) < page:
+                break
+            start_at += len(batch)
+        return all_sprints
 
     def get_sprint_issues(
         self, sprint_id: int, fields: str = "summary,status,issuetype,assignee,timetracking,parent,subtasks",
