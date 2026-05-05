@@ -2,6 +2,55 @@
 
 Generate sprint reports (markdown) and burndown charts (PNG) from Jira data.
 
+Two ways to use these tools:
+
+1. **Desktop GUI app** (`SprintReport.exe`) — point-and-click; pick a sprint from a dropdown, edit team/leaves/exclusions in tables, click Generate. See [Desktop GUI app](#desktop-gui-app) below.
+2. **CLI** — scriptable; the original `fetch_sprint_data.py` + `sprint_report.py` flow.
+
+---
+
+## Desktop GUI app
+
+A PySide6 desktop app wraps the same fetch/report pipeline behind a four-step UI:
+
+1. **Settings** — Jira base URL + Personal Access Token (or username/password). Saved encrypted in your user app-data folder; falls back to a `.env` next to the executable.
+2. **Sprint** — search boards, pick a board, pick a sprint from a dropdown, click *Load sprint*. Issues + worklogs are fetched in the background.
+3. **Configure** — sprint name, weeks, meeting reserve, team-member table (auto-populated from sprint assignees with an *Include* checkbox per person), planned-leaves table (name dropdown + days), other-exclusions table, extra-tickets table, excluded-tickets table, report options. Import or export the legacy `sprint_report_config.md` from this screen.
+4. **Generate** — run report + chart, preview both inline, open the output folder.
+
+Configs are auto-saved to `~/.config/SprintReport/configs/<sprint>.json` (Linux) or `%APPDATA%\SprintReport\configs\<sprint>.json` (Windows) and re-loaded next time you pick the same sprint.
+
+### Run from source
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-gui.txt
+python -m gui.app
+```
+
+### Build a Windows executable
+
+```powershell
+pip install -r requirements.txt
+pip install -r requirements-gui.txt
+python build_exe.py
+```
+
+Output: `dist/SprintReport.exe` (single file, no Python install needed on the target machine). The build also works on macOS and Linux to produce a native binary in the same `dist/` folder.
+
+> **Tip:** run `build_exe.py` on the OS you want to target. PyInstaller does not cross-compile.
+
+### Where things are stored
+
+| File / folder                                                        | Purpose                                  |
+| -------------------------------------------------------------------- | ---------------------------------------- |
+| `%APPDATA%\SprintReport\settings.json`                               | Jira creds (token encrypted), prefs      |
+| `%APPDATA%\SprintReport\configs\<sprint>.json`                       | Per-sprint config from the UI            |
+| `%APPDATA%\SprintReport\output\sprint_report_<sprint>.md`            | Generated markdown report (default loc.) |
+| `%APPDATA%\SprintReport\output\sprint_burndown_<sprint>.png`         | Generated burndown PNG (default loc.)    |
+
+(On Linux/macOS replace `%APPDATA%` with `~/.config` / `~/Library/Application Support`.)
+
 ---
 
 ## Prerequisites

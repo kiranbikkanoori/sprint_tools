@@ -3,3 +3,8 @@ sprint_data_*.json
 __pycache__/
 *.pyc
 .env
+
+# PyInstaller build artefacts
+build/
+dist/
+*.spec.bak
