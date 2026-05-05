@@ -353,3 +353,39 @@ def working_dates_in_range(start: date, end: date) -> list[date]:
 
 def seconds_to_hours(s: float) -> float:
     return s / 3600.0
+
+
+# Common Jira custom-field names that hold "story points" depending on the
+# instance / API shape. Probed in this order; the first non-null value wins.
+# At Silabs, ``customfield_10344`` is the populated one.
+STORY_POINT_FIELDS = (
+    "story_points",
+    "customfield_10344",
+    "customfield_10028",
+    "customfield_10016",
+    "customfield_10026",
+    "customfield_10004",
+)
+
+
+def extract_story_points(raw: dict) -> float | None:
+    """Return the first non-null story-point value across known field names.
+
+    Handles plain numbers and ``{"value": X}`` dicts (some MCP servers wrap
+    custom fields). Returns ``None`` if no field is set or all are non-numeric.
+    """
+    if not isinstance(raw, dict):
+        return None
+    for field_name in STORY_POINT_FIELDS:
+        val = raw.get(field_name)
+        if val is None:
+            continue
+        if isinstance(val, dict):
+            val = val.get("value")
+        if val is None:
+            continue
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            continue
+    return None

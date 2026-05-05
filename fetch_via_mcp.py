@@ -44,6 +44,7 @@ from mcp_client import McpClient, find_mcp_config, load_mcp_server_config
 from utils import (
     classify_issue_bucket,
     extract_issuetype_info,
+    extract_story_points,
     issue_has_subtasks,
     jira_issue_is_rest_api_shape,
     parse_jira_time_to_hours,
@@ -134,31 +135,6 @@ class JiraRestClient:
 
 
 # ── Shared data conversion ──────────────────────────────────────────────────
-
-STORY_POINT_FIELDS = [
-    "story_points", "customfield_10344", "customfield_10028",
-    "customfield_10016", "customfield_10026", "customfield_10004",
-]
-
-
-def extract_story_points(raw: dict) -> float | None:
-    """Try common Jira story point field names, return first non-null value.
-
-    Handles both plain numbers and {'value': X} dicts returned by some MCP servers.
-    """
-    for field_name in STORY_POINT_FIELDS:
-        val = raw.get(field_name)
-        if val is None:
-            continue
-        if isinstance(val, dict):
-            val = val.get("value")
-        if val is not None:
-            try:
-                return float(val)
-            except (ValueError, TypeError):
-                continue
-    return None
-
 
 def convert_issue_mcp(raw: dict) -> dict:
     """Convert an issue from MCP gateway response (fields at top level)."""

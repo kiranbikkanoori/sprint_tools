@@ -57,8 +57,19 @@ from config_parser import parse_config
 from utils import (
     classify_issue_bucket,
     extract_issuetype_info,
+    extract_story_points,
     issue_has_subtasks,
     parse_jira_time_to_hours,
+)
+
+
+# Default Jira REST ``fields`` parameter for sprint issues. Includes the common
+# story-point custom-field IDs so SP can be extracted regardless of which one
+# the Jira instance uses (Silabs uses ``customfield_10344``).
+SPRINT_ISSUE_FIELDS = (
+    "summary,status,issuetype,assignee,timetracking,parent,subtasks,"
+    "resolutiondate,customfield_10344,customfield_10028,customfield_10016,"
+    "customfield_10026,customfield_10004"
 )
 
 
@@ -111,7 +122,7 @@ class JiraClient:
         return all_sprints
 
     def get_sprint_issues(
-        self, sprint_id: int, fields: str = "summary,status,issuetype,assignee,timetracking,parent,subtasks",
+        self, sprint_id: int, fields: str = SPRINT_ISSUE_FIELDS,
         max_results: int = 200,
     ) -> list[dict]:
         """Fetch all issues in a sprint (handles pagination)."""
@@ -147,6 +158,10 @@ def convert_issue(raw: dict) -> dict:
     iname, is_sub = extract_issuetype_info(raw, rest_fields=fields)
     has_subtasks = issue_has_subtasks(raw, rest_fields=fields)
 
+    resolution_date = fields.get("resolutiondate") or ""
+    if isinstance(resolution_date, str):
+        resolution_date = resolution_date[:10]
+
     return {
         "key": raw["key"],
         "summary": fields.get("summary", ""),
@@ -166,6 +181,8 @@ def convert_issue(raw: dict) -> dict:
         "estimate_raw": est_raw,
         "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
         "remaining_estimate_raw": rem_raw,
+        "story_points": extract_story_points(fields),
+        "resolution_date": resolution_date,
         "parent_key": parent.get("key") if parent else None,
     }
 
