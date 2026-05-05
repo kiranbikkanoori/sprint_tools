@@ -20,7 +20,7 @@ These capabilities are **not** implemented in the current report generator (or o
 | 7   | Sprint health summary (aggregate KPIs)                                                                     | **Not** generated                                                                          |
 | 8   | Carried-over closed tickets section                                                                        | **Not** generated                                                                          |
 | 9   | **Extra Tickets** (table below)                                                                            | Parsed from config; **not** merged into Jira fetch or report yet                           |
-| 10  | Report toggles: *Exclude parent story estimates*, *Show per-ticket worklog details*, *Show daily log gaps* | Parsed but **ignored**; weekday gap table is **always** shown (parent+standalone combined) |
+| 10  | Report toggles: *Show per-ticket worklog details*, *Show daily log gaps* | Parsed but **ignored**; weekday gap table is **always** shown (parent+standalone combined) |
 
 
 ---
@@ -63,7 +63,7 @@ List all active sprint members below. Remove or comment out anyone who should be
 
 | Name             | Leave Days | Notes |
 | ---------------- | ---------- | ----- |
-| Kiran Bikkanoori | 3          |       |
+| Hemanth Reddy Narra | 1          |       |
 |                  |            |       |
 |                  |            |       |
 
@@ -110,11 +110,10 @@ Tickets in the sprint that should NOT be counted (e.g., tracking/umbrella ticket
 ## Report Options
 
 - **Report Date** (calculate logged work up to this date, leave blank for today): ``
-- **Exclude parent story estimates** (avoid double-counting with sub-tasks): `Yes` — *under development; see table above*
 - **Show per-ticket worklog details**: `Yes` — *under development*
 - **Show daily log gaps** (flag people who haven't logged work on a given day): `Yes` — *under development; gap table is always on for parent+standalone*
 
-> Only **Report Date** affects the current tool; the other three options are kept for when those features return.
+> Only **Report Date** affects the current tool; the other two options are kept for when those features return.
 
 ---
 

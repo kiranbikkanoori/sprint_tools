@@ -238,7 +238,6 @@ Tickets **in** the sprint that should be ignored (umbrella/tracking tickets, dup
 | Option | Values | Default | Effect |
 |--------|--------|---------|--------|
 | **Report Date** | `YYYY-MM-DD` or empty | Today | Worklogs and burndown chart cut off at this date. Use for mid-sprint snapshots. |
-| **Exclude parent story estimates** | `Yes` / `No` | `Yes` | Prevents double-counting when parent stories have estimates that duplicate sub-task totals. |
 | **Show per-ticket worklog details** | `Yes` / `No` | `Yes` | Includes the per-ticket breakdown table for each person. |
 | **Show daily log gaps** | `Yes` / `No` | `Yes` | Shows days where a team member logged zero hours. |
 

@@ -68,9 +68,51 @@ Worklog entries on **Sub-task** issues whose **started** date falls in **[sprint
 
 ---
 
+## Planned vs Capacity
+
+Per-included-person table (with a **Team total** row) summarising capacity, planned work, and logged work for the **full** sprint. Always uses the full sprint window — Report Date is ignored here, since this section is meant for end-of-sprint review.
+
+| Column | Meaning |
+|--------|---------|
+| Work d | `sprint_duration_weeks × 5` (working days, same for everyone) |
+| Mtg d | `meeting_days_reserved` from config (per person) |
+| Leave d | Sum of `Planned Leaves` rows for the person |
+| Other (h) | Sum of `Other Non-Development Activities` hours for the person |
+| Eff. d | `max(0, Work d − Mtg d − Leave d)` |
+| Capacity (h) | `max(0, Eff. d × 8 − Other (h))` |
+| Planned (h) | Sum of `estimate_hours` for **Story / Task** issues whose `assignee` matches the person, after dropping `excluded_tickets`. Sub-tasks are not counted; parent stories are taken at face value (no replacement by sub-task estimates). `Extra Tickets` from config are **not** added. |
+| Plan % | `Planned ÷ Capacity` (integer percent; `—` when Capacity is 0) |
+| Logged (h) | Same total shown in the Stories + Tasks tables above, summed for the person |
+| Util % | `Logged ÷ Capacity` (integer percent; `—` when Capacity is 0) |
+
+---
+
+## Sprint Completion & Velocity
+
+Two related measures, computed for the **full sprint**:
+
+- **Sprint Completion Rate** — fraction of **Stories + Tasks** (after dropping `excluded_tickets` and ignoring sub-tasks) considered done by sprint end. A ticket counts as done when its `status_category` is `Done` / `Complete`, **or** its `status` is `Resolved` (matches the Sprint Tickets table). Reported at both **ticket** and **story-point** granularity (target ≥ 90%).
+- **Velocity (SP / person-day)** — `Σ story_points of done Stories+Tasks ÷ team effective person-days` (effective person-days come from the Planned vs Capacity table).
+
+A **per-person** table follows the team summary, broken down by `assignee`. Unassigned tickets contribute to team totals only.
+
+---
+
+## Sprint Tickets — Status & Remaining Work
+
+Per-ticket drilldown: every **Story / Task** in the sprint (sub-tasks excluded, `excluded_tickets` dropped), sorted **unfinished-first** then by status then by key, so leftover work appears at the top.
+
+Columns: `Key`, `Summary` (truncated to ~60 chars), `Type`, `Assignee`, `Status`, `Estimate (h)`, `Remaining (h)`, `SP`.
+
+Tickets whose status is `Resolved` are treated as effectively done and grouped with `Closed` (Jira's `status_category` for `Resolved` is still `In Progress`, but most workflows use `Resolved` as a final pre-close state).
+
+A **⚠** marker on `Remaining (h)` flags tickets that are effectively done but still have `Remaining > 0` — a Jira-hygiene fix-up the team can clean up at sprint close.
+
+---
+
 ## Other Metrics
 
-Placeholder text only — planned capacity, utilization, velocity, burndown, etc. are **not** calculated in this mode.
+Placeholder text only — burndown / remaining work, JIRA hygiene score, scope churn, etc. are **not** calculated in this mode.
 
 ---
 
