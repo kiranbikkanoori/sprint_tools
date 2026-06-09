@@ -357,14 +357,15 @@ def seconds_to_hours(s: float) -> float:
 
 # Common Jira custom-field names that hold "story points" depending on the
 # instance / API shape. Probed in this order; the first non-null value wins.
-# At Silabs, ``customfield_10344`` is the populated one.
+# At Silabs, ``customfield_10344`` is the populated one. Do not include
+# unrelated numeric fields like ``customfield_10004`` ("Number of Attachments"),
+# which can falsely inflate committed SP in the report.
 STORY_POINT_FIELDS = (
     "story_points",
     "customfield_10344",
     "customfield_10028",
     "customfield_10016",
     "customfield_10026",
-    "customfield_10004",
 )
 
 
