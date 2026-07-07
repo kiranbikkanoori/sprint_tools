@@ -21,6 +21,7 @@ from fetch_sprint_data import (
     JiraClient,
     convert_issue,
     convert_worklog,
+    enrich_issues_with_backlog_churn,
     find_board,
     find_sprint,
 )
@@ -90,7 +91,8 @@ def fetch_sprint_payload(
     """
     sprint_id = sprint["id"]
     sprint_name = sprint.get("name", "")
-    start_date = (sprint.get("startDate") or "")[:10]
+    sprint_start_raw = sprint.get("startDate") or ""
+    start_date = sprint_start_raw[:10]
     end_date = (sprint.get("endDate") or "")[:10]
     goal = sprint.get("goal", "") or ""
 
@@ -107,6 +109,13 @@ def fetch_sprint_payload(
             progress_cb(f"Fetching worklogs ({idx}/{total}) — {key}", idx, total)
         raw_wl = client.get_worklogs(key)
         worklogs[key] = [convert_worklog(wl) for wl in raw_wl]
+
+    enrich_issues_with_backlog_churn(
+        client,
+        issues,
+        sprint_name,
+        sprint_start_raw or start_date,
+    )
 
     return {
         "sprint": {

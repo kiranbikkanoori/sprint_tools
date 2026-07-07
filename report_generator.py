@@ -158,6 +158,13 @@ class TeamCompletion:
         return self.sp_delivered / self.effective_days
 
 
+@dataclass
+class KpiSummaryRow:
+    label: str
+    value: str
+    notes: str
+
+
 def _log_window_end(sprint_end: date, report_date: date | None) -> date:
     if report_date is None:
         return sprint_end
@@ -524,6 +531,71 @@ def build_completion_velocity(
     )
 
 
+def build_kpi_summary(
+    config: SprintConfig,
+    issues: list[dict],
+    capacity_rows: list[PersonCapacity],
+    team_completion: TeamCompletion,
+) -> list[KpiSummaryRow]:
+    excluded = set(config.excluded_tickets)
+
+    backlog_churn_available = any("added_after_sprint_start" in i for i in issues)
+    backlog_churn_count = 0
+    if backlog_churn_available:
+        for issue in issues:
+            if issue.get("key") in excluded:
+                continue
+            if effective_issue_type(issue) not in ("Story", "Task"):
+                continue
+            if bool(issue.get("added_after_sprint_start")):
+                backlog_churn_count += 1
+
+    def _pct(p: float | None) -> str:
+        return "N/A" if p is None else f"{int(round(p))}%"
+
+    def _vel(v: float | None) -> str:
+        return "N/A" if v is None else f"{v:.2f}"
+
+    rows = [
+        KpiSummaryRow(
+            "Sprint completion rate",
+            _pct(team_completion.ticket_pct),
+            "Completed tickets / accepted tickets (Stories + Tasks only)",
+        ),
+        KpiSummaryRow("Participation rate", "N/A", "Not implemented"),
+        KpiSummaryRow("Ceremony effectiveness", "N/A", "Not implemented"),
+        KpiSummaryRow("Time-box adherence", "N/A", "Not implemented"),
+        KpiSummaryRow("Jira hygiene score", "N/A", "Not implemented"),
+        KpiSummaryRow(
+            "Sprint velocity",
+            _vel(team_completion.velocity),
+            "Completed story points / effective man-days",
+        ),
+        KpiSummaryRow("Repetition of similar issue", "N/A", "Not implemented"),
+        KpiSummaryRow(
+            "Scope stability & backlog churn",
+            str(backlog_churn_count) if backlog_churn_available else "N/A",
+            "Tickets added after sprint start",
+        ),
+        KpiSummaryRow(
+            "Number of tickets",
+            str(team_completion.tickets_committed),
+            "Stories + Tasks only",
+        ),
+        KpiSummaryRow(
+            "Number of completed tickets",
+            str(team_completion.tickets_done),
+            "Stories + Tasks done",
+        ),
+        KpiSummaryRow(
+            "Number of differed tickets",
+            str(team_completion.tickets_committed - team_completion.tickets_done),
+            "Accepted minus completed",
+        ),
+    ]
+    return rows
+
+
 def _format_day_cell(
     total_h: float,
     ticket_hours: dict[str, float],
@@ -652,32 +724,20 @@ def generate_text_report(
         "Total (tasks)",
     )
 
-    # ── Daily log gaps (no story/task hours on a weekday) ─────
-    ln("---")
-    ln("## Weekdays With Zero Logged Hours (stories + tasks)")
-    ln()
-    ln(
-        "For each included person, this lists **weekdays in the same date range as the tables above** "
-        "where **no time was logged** on either **stories** or **tasks** "
-        "(combined). It is a quick hygiene check, not an error list; same-day logging only on "
-        "sub-tasks still counts as “missing” here because those hours are excluded from the tables."
-    )
-    ln()
-    ln("| Name | Missing Days | Dates |")
-    ln("|---|---|---|")
-    for name in work_report.included_names:
-        pdata = work_report.daily_story_task.get(name, {})
-        missing = []
-        for d in display_dates:
-            cell = pdata.get(d, {"story": 0.0, "task": 0.0})
-            if cell["story"] + cell["task"] < 1e-6:
-                missing.append(d)
-        if missing:
-            date_strs = ", ".join(d.strftime("%b %d (%a)") for d in missing)
-            ln(f"| {name} | {len(missing)} | {date_strs} |")
-        else:
-            ln(f"| {name} | 0 | All tracked days logged |")
-    ln()
+    cap_rows: list[PersonCapacity] | None = None
+    team_completion: TeamCompletion | None = None
+    if issues is not None:
+        cap_rows = build_capacity_rows(config, issues, work_report)
+        team_completion = build_completion_velocity(config, issues, cap_rows)
+        kpi_rows = build_kpi_summary(config, issues, cap_rows, team_completion)
+        ln("---")
+        ln("## Sprint KPI Summary")
+        ln()
+        ln("| KPI | Value | Notes |")
+        ln("|-----|------:|-------|")
+        for row in kpi_rows:
+            ln(f"| {row.label} | {row.value} | {row.notes} |")
+        ln()
 
     # ── Validation errors ───────────────────────────────────────────────
     ln("---")
@@ -720,8 +780,8 @@ def generate_text_report(
 
     # ── Planned vs Capacity ─────────────────────────────────────────────
     if issues is not None:
-        cap_rows = build_capacity_rows(config, issues, work_report)
-        team_completion = build_completion_velocity(config, issues, cap_rows)
+        assert cap_rows is not None
+        assert team_completion is not None
         ln("---")
         ln("## Planned vs Capacity")
         ln()

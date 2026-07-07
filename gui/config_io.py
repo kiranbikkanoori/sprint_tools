@@ -41,7 +41,6 @@ def config_to_dict(cfg: SprintConfig) -> dict:
         "excluded_tickets": list(cfg.excluded_tickets),
         "report_date": cfg.report_date,
         "show_per_ticket_details": cfg.show_per_ticket_details,
-        "show_daily_log_gaps": cfg.show_daily_log_gaps,
     }
 
 
@@ -52,7 +51,6 @@ def dict_to_config(data: dict) -> SprintConfig:
     cfg.meeting_days_reserved = float(data.get("meeting_days_reserved", 1.0) or 0.0)
     cfg.report_date = data.get("report_date", "") or ""
     cfg.show_per_ticket_details = bool(data.get("show_per_ticket_details", True))
-    cfg.show_daily_log_gaps = bool(data.get("show_daily_log_gaps", True))
 
     cfg.team_members = [
         TeamMember(
@@ -188,7 +186,6 @@ def config_to_markdown(cfg: SprintConfig) -> str:
         "",
         f"- **Report Date** (calculate logged work up to this date, leave blank for today): `{cfg.report_date}`",
         f"- **Show per-ticket worklog details**: `{_bool_to_md(cfg.show_per_ticket_details)}`",
-        f"- **Show daily log gaps** (flag people who haven't logged work on a given day): `{_bool_to_md(cfg.show_daily_log_gaps)}`",
         "",
     ]
 

@@ -50,9 +50,29 @@ Two separate markdown tables with the same date columns:
 
 ---
 
-## Weekdays With Zero Logged Hours (stories + tasks)
+## Sprint KPI Summary
 
-Weekdays in the report range where an included person logged **nothing on stories or tasks** (combined). Logging only on sub-tasks in that range still shows as a “missing” day for this section.
+A single sprint-level KPI table rendered immediately after the opening Stories / Tasks tables. It mixes:
+
+- values already calculated elsewhere in the report
+- one new backlog churn metric
+- `N/A` placeholders for KPIs the tool does not implement yet
+
+Current rows:
+
+- **Sprint completion rate** — same as `Completion rate (tickets)` from the Sprint Completion & Velocity section
+- **Participation rate** — `N/A`
+- **Ceremony effectiveness** — `N/A`
+- **Time-box adherence** — `N/A`
+- **Jira hygiene score** — `N/A`
+- **Sprint velocity** — same as `Velocity (SP / person-day)`
+- **Repetition of similar issue** — `N/A`
+- **Scope stability & backlog churn** — count of **Story / Task** issues added to the sprint after `sprint.start_date`
+- **Number of tickets** — total committed **Stories + Tasks**
+- **Number of completed tickets** — done **Stories + Tasks**
+- **Number of differed tickets** — committed minus done
+
+`accepted tickets` in this table means the same committed **Stories + Tasks** population used by the current completion logic, after dropping `excluded_tickets`.
 
 ---
 
@@ -112,7 +132,7 @@ A **⚠** marker on `Remaining (h)` flags tickets that are effectively done but 
 
 ## Other Metrics
 
-Placeholder text only — burndown / remaining work, JIRA hygiene score, scope churn, etc. are **not** calculated in this mode.
+Placeholder text only — burndown / remaining work and related future sections beyond the KPI summary table are **not** calculated in this mode.
 
 ---
 
@@ -139,6 +159,7 @@ Placeholder text only — burndown / remaining work, JIRA hygiene score, scope c
 ## JSON expectations
 
 - `issues[]`: `key`, `type` (`Story` / `Task` / `Sub-task`), `issuetype_name`, `issuetype_subtask`, `has_subtasks`, `assignee`, `summary`, `parent_key`, optional `remaining_estimate_hours` / `remaining_estimate_raw`. Reports use `effective_issue_type()` so **refetch** after tool updates if `issuetype_name` was stuck on `Unknown`.
+- `issues[]` may also include `added_after_sprint_start` and `added_to_sprint_at` when fetched from Jira history; these drive the KPI summary table's backlog churn row.
 - `worklogs[key]`: `{ started, seconds, author }` for **every** sprint issue key (including stories, tasks, and sub-tasks)
 
 """.lstrip()

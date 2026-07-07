@@ -20,7 +20,7 @@ These capabilities are **not** implemented in the current report generator (or o
 | 7   | Sprint health summary (aggregate KPIs)                                                                     | **Not** generated                                                                          |
 | 8   | Carried-over closed tickets section                                                                        | **Not** generated                                                                          |
 | 9   | **Extra Tickets** (table below)                                                                            | Parsed from config; **not** merged into Jira fetch or report yet                           |
-| 10  | Report toggles: *Show per-ticket worklog details*, *Show daily log gaps* | Parsed but **ignored**; weekday gap table is **always** shown (parent+standalone combined) |
+| 10  | Report toggle: *Show per-ticket worklog details* | Parsed but **ignored** in the current report generator |
 
 
 ---
@@ -111,9 +111,8 @@ Tickets in the sprint that should NOT be counted (e.g., tracking/umbrella ticket
 
 - **Report Date** (calculate logged work up to this date, leave blank for today): ``
 - **Show per-ticket worklog details**: `Yes` — *under development*
-- **Show daily log gaps** (flag people who haven't logged work on a given day): `Yes` — *under development; gap table is always on for parent+standalone*
 
-> Only **Report Date** affects the current tool; the other two options are kept for when those features return.
+> Only **Report Date** affects the current tool; the other option is kept for when detailed per-ticket sections return.
 
 ---
 

@@ -140,11 +140,8 @@ class ConfigPage(QWidget):
         opts = QGroupBox("Report options")
         o_form = QFormLayout(opts)
         self.cb_per_ticket = QCheckBox("Show per-ticket worklog details")
-        self.cb_log_gaps = QCheckBox("Show daily log gaps")
         self.cb_per_ticket.setChecked(True)
-        self.cb_log_gaps.setChecked(True)
         o_form.addRow(self.cb_per_ticket)
-        o_form.addRow(self.cb_log_gaps)
 
         # ── Action row ──
         actions = QHBoxLayout()
@@ -280,7 +277,6 @@ class ConfigPage(QWidget):
         self.exclticket_table.set_rows([{"key": k, "reason": ""} for k in cfg.excluded_tickets])
 
         self.cb_per_ticket.setChecked(bool(cfg.show_per_ticket_details))
-        self.cb_log_gaps.setChecked(bool(cfg.show_daily_log_gaps))
 
         # Reconnect after population is done.
         self.team_table.table.itemChanged.connect(self._refresh_combos)
@@ -293,7 +289,6 @@ class ConfigPage(QWidget):
         d = self.report_date.date()
         cfg.report_date = d.toString("yyyy-MM-dd") if d.isValid() else ""
         cfg.show_per_ticket_details = self.cb_per_ticket.isChecked()
-        cfg.show_daily_log_gaps = self.cb_log_gaps.isChecked()
 
         cfg.team_members = [
             TeamMember(

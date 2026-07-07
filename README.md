@@ -239,7 +239,6 @@ Tickets **in** the sprint that should be ignored (umbrella/tracking tickets, dup
 |--------|--------|---------|--------|
 | **Report Date** | `YYYY-MM-DD` or empty | Today | Worklogs and burndown chart cut off at this date. Use for mid-sprint snapshots. |
 | **Show per-ticket worklog details** | `Yes` / `No` | `Yes` | Includes the per-ticket breakdown table for each person. |
-| **Show daily log gaps** | `Yes` / `No` | `Yes` | Shows days where a team member logged zero hours. |
 
 ### Sprint Metrics Definitions
 
@@ -380,15 +379,14 @@ sprint_report_config.md ──────────────────�
 
 The generated report includes these sections (see `REPORT_FORMAT.md` for detailed field descriptions):
 
-1. **Team Capacity** — effective days/hours per person
-2. **Planned vs Logged Work** — estimates minus pre-sprint work vs actual logged hours
-3. **Per-Ticket Worklog Details** — breakdown per ticket per person
-4. **Ticket Status Distribution** — counts by status
-5. **Daily Log Gaps** — days with no logged work
+1. **Logged Hours by Person — Stories / Tasks** — weekday worklog tables
+2. **Sprint KPI Summary** — one sprint-level KPI table with implemented metrics plus `N/A` placeholders
+3. **Daily Log Gaps** — days with no logged work
+4. **Sub-task Validation** — remaining work or worklogs on sub-tasks
+5. **Planned vs Capacity** — effective days/hours, planned hours, and utilization
 6. **Sprint Completion & Velocity** — completion rate, story-point velocity, per-person breakdown
-7. **Carried-Over Closed Tickets** — tickets closed before sprint (excluded from all metrics)
-8. **Sprint Health Summary** — consolidated metrics
-9. **Burndown Chart** — remaining work vs ideal, daily logged hours
+7. **Sprint Tickets — Status & Remaining Work** — end-of-sprint ticket snapshot
+8. **Burndown Chart** — stacked daily logged hours
 
 To generate the full field reference:
 ```bash
@@ -456,9 +454,13 @@ The intermediate JSON file (`sprint_data_*.json`) has this structure:
       "assignee": "Jane Doe",
       "estimate_hours": 16.0,
       "estimate_raw": "2d",
+      "remaining_estimate_hours": 8.0,
+      "remaining_estimate_raw": "1d",
       "story_points": 3.0,
       "resolution_date": "",
-      "parent_key": "PROJ-100"
+      "parent_key": "PROJ-100",
+      "added_to_sprint_at": "2026-03-06T10:15:00+00:00",
+      "added_after_sprint_start": true
     }
   ],
   "worklogs": {
@@ -474,6 +476,8 @@ The intermediate JSON file (`sprint_data_*.json`) has this structure:
 ```
 
 `type` is **`Story`**, **`Task`**, or **`Sub-task`**, derived from Jira **issue type** and **parent** link (see `utils.classify_issue_bucket`). Older JSON may still say `Parent` / `Standalone`; the report normalizes those to Story / Task.
+
+When Jira history is available, issues can also include `added_to_sprint_at` and `added_after_sprint_start`, which are used for the KPI summary table's backlog churn metric.
 
 To generate a blank template:
 ```bash

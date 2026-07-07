@@ -48,7 +48,6 @@ class SprintConfig:
     excluded_tickets: list = field(default_factory=list)
     report_date: str = ""
     show_per_ticket_details: bool = True
-    show_daily_log_gaps: bool = True
 
 
 def _parse_inline_code(text: str) -> str:
@@ -199,8 +198,6 @@ def parse_config(config_path: str | Path) -> SprintConfig:
             cfg.report_date = _parse_inline_code(line)
         elif "Show per-ticket worklog details" in line:
             cfg.show_per_ticket_details = _parse_bool(_parse_inline_code(line))
-        elif "Show daily log gaps" in line:
-            cfg.show_daily_log_gaps = _parse_bool(_parse_inline_code(line))
 
     return cfg
 
@@ -221,4 +218,3 @@ if __name__ == "__main__":
         inc = "included" if m.included else "EXCLUDED"
         print(f"  - {m.name} ({m.role}) [{inc}]")
     print(f"Leaves: {[(l.name, l.days) for l in cfg.planned_leaves]}")
-    print(f"Show daily gaps: {cfg.show_daily_log_gaps}")

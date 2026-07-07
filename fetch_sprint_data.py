@@ -56,6 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config_parser import parse_config
 from utils import (
     classify_issue_bucket,
+    derive_issue_added_to_sprint,
     extract_issuetype_info,
     extract_story_points,
     issue_has_subtasks,
@@ -143,6 +144,14 @@ class JiraClient:
         data = self._get(f"/rest/api/2/issue/{issue_key}/worklog")
         return data.get("worklogs", [])
 
+    def get_issue_changelog(self, issue_key: str) -> list[dict]:
+        """Fetch Jira changelog histories for an issue."""
+        data = self._get(
+            f"/rest/api/2/issue/{issue_key}",
+            {"expand": "changelog", "fields": "summary"},
+        )
+        return (data.get("changelog") or {}).get("histories", [])
+
 
 # ── Data conversion ─────────────────────────────────────────────────────────
 
@@ -196,6 +205,35 @@ def convert_worklog(raw: dict) -> dict:
         "seconds": raw.get("timeSpentSeconds", 0),
         "author": author_name,
     }
+
+
+def enrich_issues_with_backlog_churn(
+    client: JiraClient,
+    issues: list[dict],
+    sprint_name: str,
+    sprint_start: str,
+) -> None:
+    """Populate added-after-start metadata on already-converted issues."""
+    if not issues:
+        return
+    print(
+        f"Fetching issue history for {len(issues)} tickets (backlog churn)...",
+        end="",
+        flush=True,
+    )
+    for idx, issue in enumerate(issues):
+        key = issue.get("key", "")
+        histories = client.get_issue_changelog(key)
+        issue.update(
+            derive_issue_added_to_sprint(
+                sprint_name=sprint_name,
+                sprint_start=sprint_start,
+                changelog_histories=histories,
+            )
+        )
+        if (idx + 1) % 5 == 0:
+            print(f" {idx + 1}/{len(issues)}", end="", flush=True)
+    print(" done.")
 
 
 # ── Main logic ──────────────────────────────────────────────────────────────
@@ -376,7 +414,8 @@ def main():
         sys.exit(1)
 
     sprint_id = sprint["id"]
-    start_date = sprint.get("startDate", "")[:10]
+    sprint_start_raw = sprint.get("startDate", "")
+    start_date = sprint_start_raw[:10]
     end_date = sprint.get("endDate", "")[:10]
     goal = sprint.get("goal", "")
     print(f"Found sprint: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
@@ -399,6 +438,8 @@ def main():
         if (idx + 1) % 5 == 0:
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
+
+    enrich_issues_with_backlog_churn(client, issues, sprint_name, sprint_start_raw or start_date)
 
     # ── Write JSON ───────────────────────────────────────────────────────
     data = {

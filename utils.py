@@ -3,7 +3,7 @@ Shared utility functions for sprint report tools.
 """
 
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 # Whole-word "story" in Jira issue type name (e.g. "User Story", "RnD Story"; not "history").
 _ISSUE_TYPE_STORY_WORD = re.compile(r"\bstory\b", re.I)
@@ -282,6 +282,87 @@ def worklog_started_date(wl: dict) -> date | None:
         return date.fromisoformat(s)
     except ValueError:
         return None
+
+
+def parse_jira_datetime(raw: str | None) -> datetime | None:
+    """
+    Parse common Jira datetime strings, e.g. ``2026-05-26T16:46:17.383+0000``.
+    Returns ``None`` on blank or invalid input.
+    """
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    if len(s) >= 10:
+        try:
+            return datetime.combine(
+                date.fromisoformat(s[:10]),
+                time.min,
+                tzinfo=timezone.utc,
+            )
+        except ValueError:
+            return None
+    return None
+
+
+def sprint_names_from_change(raw: str | None) -> set[str]:
+    """Split a Jira Sprint changelog value into sprint names."""
+    if not raw:
+        return set()
+    return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+
+def derive_issue_added_to_sprint(
+    *,
+    sprint_name: str,
+    sprint_start: date | str,
+    changelog_histories: list[dict] | None,
+) -> dict:
+    """
+    Derive whether a Jira issue was added to ``sprint_name`` after sprint start.
+    """
+    added_at = None
+    for hist in sorted(
+        changelog_histories or [],
+        key=lambda h: parse_jira_datetime(h.get("created")) or datetime.min.replace(tzinfo=timezone.utc),
+    ):
+        created_dt = parse_jira_datetime(hist.get("created"))
+        if created_dt is None:
+            continue
+        for item in hist.get("items", []):
+            if str(item.get("field") or "") != "Sprint":
+                continue
+            from_names = sprint_names_from_change(item.get("fromString"))
+            to_names = sprint_names_from_change(item.get("toString"))
+            if sprint_name in to_names and sprint_name not in from_names:
+                added_at = created_dt
+
+    if added_at is None:
+        return {
+            "added_to_sprint_at": None,
+            "added_after_sprint_start": False,
+        }
+
+    if isinstance(sprint_start, str):
+        sprint_start_dt = parse_jira_datetime(sprint_start)
+        if sprint_start_dt is None:
+            sprint_start_dt = datetime.combine(
+                date.fromisoformat(str(sprint_start)[:10]),
+                time.min,
+                tzinfo=timezone.utc,
+            )
+    else:
+        sprint_start_dt = datetime.combine(sprint_start, time.min, tzinfo=timezone.utc)
+    return {
+        "added_to_sprint_at": added_at.isoformat(),
+        "added_after_sprint_start": added_at > sprint_start_dt,
+    }
 
 
 def parse_jira_time_to_hours(time_str: str) -> float:

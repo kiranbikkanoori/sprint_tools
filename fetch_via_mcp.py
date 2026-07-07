@@ -43,6 +43,7 @@ from config_parser import parse_config
 from mcp_client import McpClient, find_mcp_config, load_mcp_server_config
 from utils import (
     classify_issue_bucket,
+    derive_issue_added_to_sprint,
     extract_issuetype_info,
     extract_story_points,
     issue_has_subtasks,
@@ -132,6 +133,13 @@ class JiraRestClient:
     def get_worklogs(self, issue_key: str) -> list[dict]:
         data = self._get(f"/rest/api/2/issue/{issue_key}/worklog")
         return data.get("worklogs", [])
+
+    def get_issue_changelog(self, issue_key: str) -> list[dict]:
+        data = self._get(
+            f"/rest/api/2/issue/{issue_key}",
+            {"expand": "changelog", "fields": "summary"},
+        )
+        return (data.get("changelog") or {}).get("histories", [])
 
 
 # ── Shared data conversion ──────────────────────────────────────────────────
@@ -509,6 +517,45 @@ def _print_sprint_not_found(sprint_name: str, board_id, all_found: list):
         print(f"    ... and {len(all_found) - 15} more", file=sys.stderr)
 
 
+def _make_history_client(
+    jira_url: str | None,
+    jira_token: str | None,
+) -> JiraRestClient | None:
+    base_url = resolve_jira_url(jira_url)
+    pat = resolve_jira_pat_optional(jira_token)
+    if not pat:
+        return None
+    return JiraRestClient(base_url, pat)
+
+
+def _enrich_issues_with_backlog_churn(
+    issues: list[dict],
+    history_client: JiraRestClient | None,
+    sprint_name: str,
+    sprint_start: str,
+) -> None:
+    if not issues or history_client is None:
+        return
+    print(
+        f"Fetching issue history for {len(issues)} tickets (backlog churn)...",
+        end="",
+        flush=True,
+    )
+    for idx, issue in enumerate(issues):
+        key = issue.get("key", "")
+        histories = history_client.get_issue_changelog(key)
+        issue.update(
+            derive_issue_added_to_sprint(
+                sprint_name=sprint_name,
+                sprint_start=sprint_start,
+                changelog_histories=histories,
+            )
+        )
+        if (idx + 1) % 5 == 0:
+            print(f" {idx + 1}/{len(issues)}", end="", flush=True)
+    print(" done.")
+
+
 # ── Fetch via MCP ───────────────────────────────────────────────────────────
 
 def fetch_via_mcp(
@@ -538,7 +585,8 @@ def fetch_via_mcp(
         sys.exit(1)
 
     sprint_id = str(sprint["id"])
-    start_date = (sprint.get("start_date") or sprint.get("startDate", ""))[:10]
+    sprint_start_raw = sprint.get("start_date") or sprint.get("startDate", "")
+    start_date = sprint_start_raw[:10]
     end_date = (sprint.get("end_date") or sprint.get("endDate", ""))[:10]
     goal = sprint.get("goal", "")
     print(f"Found: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
@@ -575,6 +623,14 @@ def fetch_via_mcp(
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
 
+    history_client = _make_history_client(jira_url, jira_token)
+    _enrich_issues_with_backlog_churn(
+        issues,
+        history_client,
+        sprint_name,
+        sprint_start_raw or start_date,
+    )
+
     _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, tickets_to_fetch, output_path)
 
 
@@ -600,7 +656,8 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
         sys.exit(1)
 
     sprint_id = sprint["id"]
-    start_date = (sprint.get("startDate") or sprint.get("start_date", ""))[:10]
+    sprint_start_raw = sprint.get("startDate") or sprint.get("start_date", "")
+    start_date = sprint_start_raw[:10]
     end_date = (sprint.get("endDate") or sprint.get("end_date", ""))[:10]
     goal = sprint.get("goal", "")
     print(f"Found: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
@@ -620,6 +677,13 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
         if (idx + 1) % 5 == 0:
             print(f" {idx + 1}/{len(tickets_to_fetch)}", end="", flush=True)
     print(" done.")
+
+    _enrich_issues_with_backlog_churn(
+        issues,
+        client,
+        sprint_name,
+        sprint_start_raw or start_date,
+    )
 
     _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, tickets_to_fetch, output_path)
 
