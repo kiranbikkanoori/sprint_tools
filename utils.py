@@ -299,6 +299,10 @@ def parse_jira_datetime(raw: str | None) -> datetime | None:
             return datetime.strptime(s, fmt)
         except ValueError:
             continue
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        pass
     if len(s) >= 10:
         try:
             return datetime.combine(
@@ -309,6 +313,22 @@ def parse_jira_datetime(raw: str | None) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def format_jira_datetime_ist(raw: str | None) -> str:
+    """
+    Format a Jira timestamp as ``YYYY-MM-DD HH:MM IST``.
+    Returns ``—`` when missing or invalid.
+    """
+    dt = parse_jira_datetime(raw)
+    if dt is None:
+        return "—"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(IST).strftime("%Y-%m-%d %H:%M IST")
 
 
 def sprint_names_from_change(raw: str | None) -> set[str]:

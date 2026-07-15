@@ -587,7 +587,8 @@ def fetch_via_mcp(
     sprint_id = str(sprint["id"])
     sprint_start_raw = sprint.get("start_date") or sprint.get("startDate", "")
     start_date = sprint_start_raw[:10]
-    end_date = (sprint.get("end_date") or sprint.get("endDate", ""))[:10]
+    sprint_end_raw = sprint.get("end_date") or sprint.get("endDate", "")
+    end_date = sprint_end_raw[:10]
     goal = sprint.get("goal", "")
     print(f"Found: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
 
@@ -631,7 +632,18 @@ def fetch_via_mcp(
         sprint_start_raw or start_date,
     )
 
-    _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, tickets_to_fetch, output_path)
+    _write_output(
+        sprint_name,
+        start_date,
+        end_date,
+        goal,
+        issues,
+        worklogs,
+        tickets_to_fetch,
+        output_path,
+        start_datetime=sprint_start_raw,
+        end_datetime=sprint_end_raw,
+    )
 
 
 # ── Fetch via direct REST ───────────────────────────────────────────────────
@@ -658,7 +670,8 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
     sprint_id = sprint["id"]
     sprint_start_raw = sprint.get("startDate") or sprint.get("start_date", "")
     start_date = sprint_start_raw[:10]
-    end_date = (sprint.get("endDate") or sprint.get("end_date", ""))[:10]
+    sprint_end_raw = sprint.get("endDate") or sprint.get("end_date", "")
+    end_date = sprint_end_raw[:10]
     goal = sprint.get("goal", "")
     print(f"Found: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
 
@@ -685,17 +698,42 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
         sprint_start_raw or start_date,
     )
 
-    _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, tickets_to_fetch, output_path)
+    _write_output(
+        sprint_name,
+        start_date,
+        end_date,
+        goal,
+        issues,
+        worklogs,
+        tickets_to_fetch,
+        output_path,
+        start_datetime=sprint_start_raw,
+        end_datetime=sprint_end_raw,
+    )
 
 
 # ── Shared output ───────────────────────────────────────────────────────────
 
-def _write_output(sprint_name, start_date, end_date, goal, issues, worklogs, tickets_to_fetch, output_path):
+def _write_output(
+    sprint_name,
+    start_date,
+    end_date,
+    goal,
+    issues,
+    worklogs,
+    tickets_to_fetch,
+    output_path,
+    *,
+    start_datetime: str = "",
+    end_datetime: str = "",
+):
     data = {
         "sprint": {
             "name": sprint_name,
             "start_date": start_date,
             "end_date": end_date,
+            "start_datetime": start_datetime,
+            "end_datetime": end_datetime,
             "goal": goal,
         },
         "issues": issues,

@@ -57,7 +57,9 @@ def generate_outputs(
     if make_report:
         text = generate_text_report(
             config, sprint_start, sprint_end, work_report,
-            sprint_goal=sprint_goal, issues=issues,
+            sprint_goal=sprint_goal,
+            issues=issues,
+            sprint_start_raw=sprint_info.get("start_datetime") or sprint_info.get("start_date"),
         )
         path = output_dir / f"sprint_report_{safe_name}.md"
         path.write_text(text, encoding="utf-8")

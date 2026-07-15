@@ -14,6 +14,7 @@ from datetime import date
 from config_parser import SprintConfig
 from utils import (
     effective_issue_type,
+    format_jira_datetime_ist,
     hours_to_jira,
     parse_jira_time_to_hours,
     worklog_started_date,
@@ -163,6 +164,16 @@ class KpiSummaryRow:
     label: str
     value: str
     notes: str
+
+
+@dataclass
+class BacklogChurnRow:
+    key: str
+    summary: str
+    assignee: str
+    status: str
+    sprint_started_ist: str
+    added_to_sprint_ist: str
 
 
 def _log_window_end(sprint_end: date, report_date: date | None) -> date:
@@ -596,6 +607,36 @@ def build_kpi_summary(
     return rows
 
 
+def build_backlog_churn_rows(
+    config: SprintConfig,
+    issues: list[dict],
+    sprint_start_raw: str | None,
+) -> list[BacklogChurnRow]:
+    excluded = set(config.excluded_tickets)
+    rows: list[BacklogChurnRow] = []
+    sprint_started_ist = format_jira_datetime_ist(sprint_start_raw)
+    for issue in issues:
+        if issue.get("key") in excluded:
+            continue
+        if effective_issue_type(issue) not in ("Story", "Task"):
+            continue
+        if not bool(issue.get("added_after_sprint_start")):
+            continue
+        summary = (issue.get("summary") or "").strip()
+        rows.append(
+            BacklogChurnRow(
+                key=issue.get("key", ""),
+                summary=summary,
+                assignee=(issue.get("assignee") or "Unassigned").strip(),
+                status=(issue.get("status") or "Unknown").strip(),
+                sprint_started_ist=sprint_started_ist,
+                added_to_sprint_ist=format_jira_datetime_ist(issue.get("added_to_sprint_at")),
+            )
+        )
+    rows.sort(key=lambda r: (r.added_to_sprint_ist, r.key))
+    return rows
+
+
 def _format_day_cell(
     total_h: float,
     ticket_hours: dict[str, float],
@@ -627,6 +668,7 @@ def generate_text_report(
     sprint_goal: str = "",
     *,
     issues: list[dict] | None = None,
+    sprint_start_raw: str | None = None,
 ) -> str:
     """
     Return markdown sprint report (story vs task logging model).
@@ -730,6 +772,7 @@ def generate_text_report(
         cap_rows = build_capacity_rows(config, issues, work_report)
         team_completion = build_completion_velocity(config, issues, cap_rows)
         kpi_rows = build_kpi_summary(config, issues, cap_rows, team_completion)
+        churn_rows = build_backlog_churn_rows(config, issues, sprint_start_raw)
         ln("---")
         ln("## Sprint KPI Summary")
         ln()
@@ -738,6 +781,24 @@ def generate_text_report(
         for row in kpi_rows:
             ln(f"| {row.label} | {row.value} | {row.notes} |")
         ln()
+        if churn_rows:
+            ln("### Tickets Added After Sprint Start")
+            ln()
+            ln(
+                "| Key | Summary | Assignee | Status | Sprint Started (IST) | Added To Sprint (IST) |"
+            )
+            ln(
+                "|-----|---------|----------|--------|----------------------|-----------------------|"
+            )
+            for row in churn_rows:
+                summary = row.summary.replace("|", "\\|")
+                if len(summary) > 60:
+                    summary = summary[:57].rstrip() + "…"
+                ln(
+                    f"| {row.key} | {summary} | {row.assignee} | {row.status} | "
+                    f"{row.sprint_started_ist} | {row.added_to_sprint_ist} |"
+                )
+            ln()
 
     # ── Validation errors ───────────────────────────────────────────────
     ln("---")

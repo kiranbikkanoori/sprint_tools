@@ -143,7 +143,9 @@ def main():
     if not args.chart_only:
         report_text = generate_text_report(
             config, sprint_start, sprint_end, work_report,
-            sprint_goal=sprint_goal, issues=issues,
+            sprint_goal=sprint_goal,
+            issues=issues,
+            sprint_start_raw=sprint_info.get("start_datetime") or sprint_info.get("start_date"),
         )
 
         report_path = output_dir / f"sprint_report_{safe_name}.md"

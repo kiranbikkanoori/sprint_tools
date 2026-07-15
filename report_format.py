@@ -74,6 +74,8 @@ Current rows:
 
 `accepted tickets` in this table means the same committed **Stories + Tasks** population used by the current completion logic, after dropping `excluded_tickets`.
 
+When backlog churn is non-zero, a second table appears directly below the KPI summary listing each affected ticket with: `Key`, `Summary`, `Assignee`, `Status`, `Sprint Started (IST)`, and `Added To Sprint (IST)`.
+
 ---
 
 ## Validation: Sub-tasks With Remaining Work
@@ -159,7 +161,8 @@ Placeholder text only — burndown / remaining work and related future sections 
 ## JSON expectations
 
 - `issues[]`: `key`, `type` (`Story` / `Task` / `Sub-task`), `issuetype_name`, `issuetype_subtask`, `has_subtasks`, `assignee`, `summary`, `parent_key`, optional `remaining_estimate_hours` / `remaining_estimate_raw`. Reports use `effective_issue_type()` so **refetch** after tool updates if `issuetype_name` was stuck on `Unknown`.
-- `issues[]` may also include `added_after_sprint_start` and `added_to_sprint_at` when fetched from Jira history; these drive the KPI summary table's backlog churn row.
+- `sprint`: `start_date`, `end_date`, optional `start_datetime` / `end_datetime`, `goal`
+- `issues[]` may also include `added_after_sprint_start` and `added_to_sprint_at` when fetched from Jira history; these drive the KPI summary table's backlog churn row and its conditional ticket drilldown table.
 - `worklogs[key]`: `{ started, seconds, author }` for **every** sprint issue key (including stories, tasks, and sub-tasks)
 
 """.lstrip()

@@ -93,7 +93,8 @@ def fetch_sprint_payload(
     sprint_name = sprint.get("name", "")
     sprint_start_raw = sprint.get("startDate") or ""
     start_date = sprint_start_raw[:10]
-    end_date = (sprint.get("endDate") or "")[:10]
+    sprint_end_raw = sprint.get("endDate") or ""
+    end_date = sprint_end_raw[:10]
     goal = sprint.get("goal", "") or ""
 
     if progress_cb:
@@ -122,6 +123,8 @@ def fetch_sprint_payload(
             "name": sprint_name,
             "start_date": start_date,
             "end_date": end_date,
+            "start_datetime": sprint_start_raw,
+            "end_datetime": sprint_end_raw,
             "goal": goal,
         },
         "issues": issues,

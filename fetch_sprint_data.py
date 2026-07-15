@@ -416,7 +416,8 @@ def main():
     sprint_id = sprint["id"]
     sprint_start_raw = sprint.get("startDate", "")
     start_date = sprint_start_raw[:10]
-    end_date = sprint.get("endDate", "")[:10]
+    sprint_end_raw = sprint.get("endDate", "")
+    end_date = sprint_end_raw[:10]
     goal = sprint.get("goal", "")
     print(f"Found sprint: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
 
@@ -447,6 +448,8 @@ def main():
             "name": sprint_name,
             "start_date": start_date,
             "end_date": end_date,
+            "start_datetime": sprint_start_raw,
+            "end_datetime": sprint_end_raw,
             "goal": goal,
         },
         "issues": issues,
