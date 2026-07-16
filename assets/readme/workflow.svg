@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
+  <title id="title">Four-step Sprint Report workflow</title>
+  <desc id="desc">Settings, Sprint, Configure, and Generate - the guided path from Jira credentials to report preview.</desc>
+
+  <rect width="1200" height="280" rx="26" fill="#F7F9FC"/>
+  <rect x="1" y="1" width="1198" height="278" rx="25" fill="none" stroke="#D5DEEC"/>
+
+  <text x="56" y="48" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="700" fill="#0B3D91" letter-spacing="1.4">HOW IT WORKS</text>
+  <text x="56" y="84" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="700" fill="#0F172A">Four steps. From Jira to preview.</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <g transform="translate(56 120)">
+      <rect width="240" height="120" rx="16" fill="#FFFFFF" stroke="#D5DEEC"/>
+      <rect x="16" y="16" width="36" height="36" rx="10" fill="#2176FF"/>
+      <text x="34" y="40" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="16" font-weight="700" fill="#FFFFFF">1</text>
+      <text x="64" y="40" font-size="18" font-weight="700" fill="#0F172A">Settings</text>
+      <text x="16" y="76" font-size="14" fill="#475569">Jira URL + PAT</text>
+      <text x="16" y="98" font-size="14" fill="#475569">Saved encrypted locally</text>
+    </g>
+
+    <path d="M308 180 H340" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"/>
+    <path d="M332 172 L344 180 L332 188" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <g transform="translate(356 120)">
+      <rect width="240" height="120" rx="16" fill="#FFFFFF" stroke="#D5DEEC"/>
+      <rect x="16" y="16" width="36" height="36" rx="10" fill="#2176FF"/>
+      <text x="34" y="40" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="16" font-weight="700" fill="#FFFFFF">2</text>
+      <text x="64" y="40" font-size="18" font-weight="700" fill="#0F172A">Sprint</text>
+      <text x="16" y="76" font-size="14" fill="#475569">Search board, pick sprint</text>
+      <text x="16" y="98" font-size="14" fill="#475569">Load issues + worklogs</text>
+    </g>
+
+    <path d="M608 180 H640" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"/>
+    <path d="M632 172 L644 180 L632 188" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <g transform="translate(656 120)">
+      <rect width="240" height="120" rx="16" fill="#FFFFFF" stroke="#D5DEEC"/>
+      <rect x="16" y="16" width="36" height="36" rx="10" fill="#2176FF"/>
+      <text x="34" y="40" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="16" font-weight="700" fill="#FFFFFF">3</text>
+      <text x="64" y="40" font-size="18" font-weight="700" fill="#0F172A">Configure</text>
+      <text x="16" y="76" font-size="14" fill="#475569">Team, leaves, exclusions</text>
+      <text x="16" y="98" font-size="14" fill="#475569">Auto-saved per sprint</text>
+    </g>
+
+    <path d="M908 180 H940" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"/>
+    <path d="M932 172 L944 180 L932 188" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <g transform="translate(956 120)">
+      <rect width="188" height="120" rx="16" fill="#2176FF"/>
+      <rect x="16" y="16" width="36" height="36" rx="10" fill="#FFFFFF" fill-opacity="0.2"/>
+      <text x="34" y="40" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="16" font-weight="700" fill="#FFFFFF">4</text>
+      <text x="64" y="40" font-size="18" font-weight="700" fill="#FFFFFF">Generate</text>
+      <text x="16" y="76" font-size="14" fill="#E8F1FF">Preview report + chart</text>
+      <text x="16" y="98" font-size="14" fill="#E8F1FF">Open output folder</text>
+    </g>
+  </g>
+</svg>

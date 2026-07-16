@@ -1,34 +1,65 @@
-# Sprint Report Tools
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Sprint Report desktop app that turns a Jira sprint into a markdown report and burndown chart in four guided steps">
+</p>
 
-Generate sprint reports (markdown) and burndown charts (PNG) from Jira data.
+# Sprint Report
 
-Two ways to use these tools:
+A PySide6 desktop app for sprint leads: connect to Jira, pick a sprint, adjust team capacity, and generate a markdown report plus burndown chart — without hand-editing config files.
 
-1. **Desktop GUI app** (`SprintReport.exe`) — point-and-click; pick a sprint from a dropdown, edit team/leaves/exclusions in tables, click Generate. See [Desktop GUI app](#desktop-gui-app) below.
-2. **CLI** — scriptable; the original `fetch_sprint_data.py` + `sprint_report.py` flow.
+**Outputs**
+
+- `sprint_report_<sprint>.md` — logged hours, KPIs, gaps, velocity, ticket snapshot  
+- `sprint_burndown_<sprint>.png` — stacked daily hours by person  
 
 ---
 
-## Desktop GUI app
+## Proof
 
-A PySide6 desktop app wraps the same fetch/report pipeline behind a four-step UI:
+Real chart from sprint `Wi-Fi_LMAC_2026_11`:
 
-1. **Settings** — Jira base URL + Personal Access Token (or username/password). Saved encrypted in your user app-data folder; falls back to a `.env` next to the executable.
-2. **Sprint** — search boards, pick a board, pick a sprint from a dropdown, click *Load sprint*. Issues + worklogs are fetched in the background.
-3. **Configure** — sprint name, weeks, meeting reserve, team-member table (auto-populated from sprint assignees with an *Include* checkbox per person), planned-leaves table (name dropdown + days), other-exclusions table, extra-tickets table, excluded-tickets table, report options. Import or export the legacy `sprint_report_config.md` from this screen.
-4. **Generate** — run report + chart, preview both inline, open the output folder.
+<p align="center">
+  <img src="./assets/readme/proof-burndown.png" width="100%" alt="Stacked burndown chart of hours logged per person for Wi-Fi_LMAC_2026_11">
+</p>
 
-Configs are auto-saved to `~/.config/SprintReport/configs/<sprint>.json` (Linux) or `%APPDATA%\SprintReport\configs\<sprint>.json` (Windows) and re-loaded next time you pick the same sprint.
+The Generate step previews both the report and this chart inline before you open the output folder.
+
+---
+
+<p align="center">
+  <img src="./assets/readme/workflow.svg" width="100%" alt="Four-step workflow: Settings, Sprint, Configure, Generate">
+</p>
+
+### What each step does
+
+| Step | You do | App does |
+|------|--------|----------|
+| **1. Settings** | Enter Jira base URL + Personal Access Token (or username/password) | Saves credentials encrypted under your OS app-data folder; falls back to a `.env` next to the executable |
+| **2. Sprint** | Search boards, pick a board and sprint, click *Load sprint* | Fetches issues + worklogs in the background |
+| **3. Configure** | Tune weeks, meeting reserve, team include flags, leaves, exclusions, extras | Auto-populates assignees from the sprint; auto-saves per-sprint JSON; can import/export `sprint_report_config.md` |
+| **4. Generate** | Click generate | Builds the report + burndown chart, previews both inline, opens the output folder |
+
+---
+
+<p align="center">
+  <img src="./assets/readme/section-get-started.svg" width="100%" alt="Get started — install, run, and build the desktop app">
+</p>
+
+### Requirements
+
+- Python **3.10+**
+- Jira access (Personal Access Token recommended)
+- Dependencies from `requirements.txt` and `requirements-gui.txt`
 
 ### Run from source
 
 ```bash
+cd sprint_tools
 pip install -r requirements.txt
 pip install -r requirements-gui.txt
 python -m gui.app
 ```
 
-### Build a Windows executable
+### Build a standalone executable
 
 ```powershell
 pip install -r requirements.txt
@@ -36,381 +67,90 @@ pip install -r requirements-gui.txt
 python build_exe.py
 ```
 
-Output: `dist/SprintReport.exe` (single file, no Python install needed on the target machine). The build also works on macOS and Linux to produce a native binary in the same `dist/` folder.
+Output lands in `dist/` as `SprintReport.exe` (Windows) or `SprintReport` (macOS/Linux). No Python install needed on the target machine.
 
-> **Tip:** run `build_exe.py` on the OS you want to target. PyInstaller does not cross-compile.
+> Run `build_exe.py` on the OS you want to target — PyInstaller does not cross-compile.
 
-### Where things are stored
+### First-run checklist
 
-| File / folder                                                        | Purpose                                  |
-| -------------------------------------------------------------------- | ---------------------------------------- |
-| `%APPDATA%\SprintReport\settings.json`                               | Jira creds (token encrypted), prefs      |
-| `%APPDATA%\SprintReport\configs\<sprint>.json`                       | Per-sprint config from the UI            |
-| `%APPDATA%\SprintReport\output\sprint_report_<sprint>.md`            | Generated markdown report (default loc.) |
-| `%APPDATA%\SprintReport\output\sprint_burndown_<sprint>.png`         | Generated burndown PNG (default loc.)    |
-
-(On Linux/macOS replace `%APPDATA%` with `~/.config` / `~/Library/Application Support`.)
+1. Open the app → **Settings** → set Jira URL + PAT → Save  
+2. **Sprint** → search your board → pick the sprint → *Load sprint*  
+3. **Configure** → set **report date**, uncheck managers, add leaves / exclusions if needed  
+4. **Generate** → preview report + chart → open the output folder  
 
 ---
 
-## Prerequisites
+## Where files are stored
 
-### 1. Python 3.10+
+| Path | Purpose |
+|------|---------|
+| `%APPDATA%\SprintReport\settings.json` | Jira creds (token encrypted), prefs |
+| `%APPDATA%\SprintReport\configs\<sprint>.json` | Per-sprint UI config |
+| `%APPDATA%\SprintReport\output\sprint_report_<sprint>.md` | Generated report (default) |
+| `%APPDATA%\SprintReport\output\sprint_burndown_<sprint>.png` | Generated chart (default) |
+| `%APPDATA%\SprintReport\logs\` | Session / crash logs |
 
-```bash
-python3 --version   # must be 3.10 or later
-```
-
-### 2. Python Dependencies
-
-```bash
-cd sprint_tools
-pip install -r requirements.txt
-```
-
-This installs:
-- `matplotlib` — burndown chart generation
-- `requests` — MCP gateway communication
-
-### 3. Jira Authentication
-
-The tools support two modes for fetching Jira data, auto-detected at runtime:
-
-**Mode 1: MCP Gateway** (default when Cursor is available)
-- Uses credentials from `~/.cursor/mcp.json` (the same PAT configured for the Jira MCP server in Cursor)
-- Zero extra setup if you already have Jira MCP working in Cursor
-
-**Mode 2: Direct Jira REST API** (for terminal use without Cursor)
-- Falls back automatically if MCP gateway is unavailable or fails
-- Can be forced with `--no-mcp`
-- Uses your Jira Personal Access Token (PAT)
-
-**PAT resolution priority** (first match wins):
-1. `--jira-token` CLI argument
-2. `JIRA_TOKEN` environment variable
-3. `.env` file in sprint_tools directory
-4. PAT extracted from `~/.cursor/mcp.json` (if available)
-5. Interactive prompt (asks you to enter the PAT)
-
-**Setting up the PAT:**
-
-```bash
-# Option A: .env file (recommended for terminal use)
-cp .env.defaults .env
-# Edit .env and set your token:
-#   JIRA_TOKEN=your-personal-access-token
-
-# Option B: Environment variable
-export JIRA_TOKEN=your-personal-access-token
-
-# Option C: Let the script prompt you interactively
-python3 fetch_via_mcp.py --no-mcp --config sprint_report_config.md
-# → will ask for PAT if not found elsewhere
-```
-
-**Creating a Jira PAT:**
-1. Go to Jira → Profile (top-right avatar) → Personal Access Tokens
-2. Create a new token with read access
-3. Copy the token value
-
-**Jira URL configuration:**
-
-The default Jira URL is `https://jira.silabs.com`. To override:
-- `--jira-url https://your-jira.example.com` on the command line
-- Set `JIRA_BASE_URL=https://your-jira.example.com` in `.env`
-- Or edit `.env.defaults` to change the default for your team
-
-**Verify MCP setup** (only needed for Mode 1):
-```bash
-cat ~/.cursor/mcp.json | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-for k, v in d.get('mcpServers', {}).items():
-    if 'jira' in k.lower():
-        print(f'  Found: {k} ({v.get(\"type\",\"?\")})')
-"
-```
+On Linux use `~/.config/SprintReport/…`. On macOS use `~/Library/Application Support/SprintReport/…`.
 
 ---
 
-## Quick Start
+## What the report contains
 
-```bash
-cd sprint_tools
-
-# Full run: fetch Jira data + generate report + burndown chart
-./run.sh
-
-# Or with a known board ID (faster, skips board search)
-./run.sh --board-id 1325
-```
-
-Output files appear in `./output/`:
-- `sprint_report_<name>.md` — full text report
-- `sprint_burndown_<name>.png` — burndown chart
+1. **Logged Hours by Person** — stories and tasks, weekday tables  
+2. **Sprint KPI Summary** — completion, velocity, churn, ticket counts  
+3. **Daily Log Gaps** — days with no logged work  
+4. **Sub-task Validation** — remaining work / worklogs on sub-tasks  
+5. **Sprint Completion & Velocity** — per-person breakdown  
+6. **Sprint Tickets** — status and remaining work  
+7. **Burndown Chart** — stacked daily logged hours  
 
 ---
 
-## Configuration — `sprint_report_config.md`
+## Configure screen (what you can edit)
 
-Edit this file before each sprint. Below is a field-by-field guide.
+| Area | Purpose |
+|------|---------|
+| Sprint name / duration / report date | Identity and worklog cut-off (see below) |
+| Meeting / ceremony reserve | Days deducted from each person's capacity |
+| Team members | Include/exclude people (assignees pre-filled) |
+| Planned leaves | Leave days per person (name must match team list) |
+| Other exclusions | Non-dev hours (support, mentoring, …) |
+| Extra tickets | Tickets outside the sprint to still track |
+| Excluded tickets | In-sprint tickets to ignore (umbrellas, duplicates) |
+| Report options | Per-ticket worklog detail on/off |
 
-### Sprint Details
+Configs reload automatically the next time you open the same sprint.
 
-| Field | Format | Example | Notes |
-|-------|--------|---------|-------|
-| **Sprint Name** | Backtick-wrapped string | `` `Wi-Fi_LMAC_2026_5` `` | Must match the Jira sprint name **exactly** (case-sensitive). The script uses this to find the sprint. |
-| **Sprint Duration (weeks)** | Number | `` `2` `` | Used for capacity calculation (working days = weeks × 5). |
+### Report date (important)
 
-### Team Members
+The report and burndown only include worklogs **up to and including the report date**. Anything logged after that date is ignored.
 
-A table of all sprint participants. Each row has:
+- Set the date deliberately before you generate (for example today for a mid-sprint snapshot, or the sprint end date for a final report).
+- If the date is wrong, hours, gaps, KPIs, and the chart will all be truncated or incomplete.
 
-| Column | Values | Effect |
-|--------|--------|--------|
-| Name | Full display name | Must match the **Jira display name** exactly (used to match worklogs). |
-| Role | Any text | For reference only, not used in calculations. |
-| Include in Report | `Yes` / `No` | `No` excludes the person from all calculations (e.g., managers). |
+### Planned leaves (name matching)
 
-**Example:**
-```markdown
-| # | Name | Role | Include in Report |
-|---|------|------|-------------------|
-| 1 | Sunil Jangiti | Developer | Yes |
-| 2 | Trinadh Angara | Manager | No |
-```
+Leave rows are matched to people by **name**. The name must match a row in **Team members** exactly (same spelling and spacing as shown in that list).
 
-**When to update:** Add new members, remove people who left, set `No` for anyone not doing sprint work.
-
-### Capacity Adjustments
-
-#### Meeting Days Reserved
-
-```markdown
-- **Days reserved**: `1`
-```
-
-This many days are deducted from **each person's** capacity. For a 2-week sprint (10 working days) with 1d reserved → 9 effective days (72h) per person.
-
-#### Planned Leaves
-
-```markdown
-| Name | Leave Days | Notes |
-|------|-----------|-------|
-| Kiran Bikkanoori | 3 | 3d leave |
-| | | |
-```
-
-Add a row for each person with planned leave. Name must match the Team Members table exactly. Leave blank rows for unused slots.
-
-#### Other Non-Development Activities
-
-```markdown
-| Name | Hours Excluded | Reason |
-|------|---------------|--------|
-| Jane Doe | 8 | Production support rotation |
-```
-
-Hours deducted from a person's capacity for recurring non-sprint work (support, mentoring, etc.).
-
-### Extra Tickets
-
-Tickets **not** in the sprint that should still be tracked:
-
-```markdown
-| Ticket Key | Assignee | Notes |
-|------------|----------|-------|
-| PROJ-999 | Jane Doe | Backlog item being worked on |
-```
-
-### Tickets to Exclude
-
-Tickets **in** the sprint that should be ignored (umbrella/tracking tickets, duplicates):
-
-```markdown
-| Ticket Key | Reason |
-|------------|--------|
-| PROJ-100 | Umbrella story, no actual work |
-```
-
-### Report Options
-
-| Option | Values | Default | Effect |
-|--------|--------|---------|--------|
-| **Report Date** | `YYYY-MM-DD` or empty | Today | Worklogs and burndown chart cut off at this date. Use for mid-sprint snapshots. |
-| **Show per-ticket worklog details** | `Yes` / `No` | `Yes` | Includes the per-ticket breakdown table for each person. |
-
-### Sprint Metrics Definitions
-
-This section is informational — it documents what completion rate and velocity mean. No changes needed unless you want to update the target thresholds (targets are displayed in the report but not enforced by code).
-
-### What to Change Each Sprint
-
-Typically you only need to update these fields:
-
-1. **Sprint Name** — new sprint name
-2. **Planned Leaves** — clear old entries, add new ones
-3. **Tickets to Exclude** — clear old entries, add new ones if needed
-4. **Team Members** — add/remove members or change Include status
-5. **Report Date** — clear it (leave empty for today) unless you want a specific date
+- Prefer picking the name from the dropdown when the UI offers one.
+- If the name does not match, that leave is **not applied** — capacity stays full for that person and the report will look wrong.
 
 ---
 
-## Usage
-
-### Full Run (recommended)
-
-```bash
-./run.sh
-```
-
-This runs two steps:
-1. **Fetch data from Jira** — connects via MCP gateway (or falls back to direct REST API)
-2. **Generate report + chart** — produces the markdown report and burndown PNG
-
-### Common Options
-
-```bash
-# Force direct REST API (no Cursor/MCP needed)
-./run.sh --no-mcp
-
-# Override Jira URL
-./run.sh --no-mcp --jira-url https://your-jira.example.com
-
-# Only fetch data, don't generate report yet
-./run.sh --fetch-only
-
-# Re-generate report from existing data (no Jira fetch)
-./run.sh --report-only
-
-# Custom config file
-./run.sh -c /path/to/my_config.md
-
-# Custom output directory
-./run.sh -o ./my_output
-
-# Generate REPORT_FORMAT.md (field reference doc)
-./run.sh --generate-format
-
-# Clean up all generated files
-./run.sh --cleanup
-```
-
-### Running Python Scripts Directly
-
-If you prefer to run the scripts individually:
-
-```bash
-# Step 1: Fetch Jira data (auto-detects MCP or REST)
-python3 fetch_via_mcp.py --config sprint_report_config.md --board-id 1325
-
-# Step 1 (alt): Force direct REST API
-python3 fetch_via_mcp.py --config sprint_report_config.md --no-mcp --board-id 1325
-
-# Step 2: Generate report + chart
-python3 sprint_report.py \
-  --config sprint_report_config.md \
-  --data sprint_data_Wi-Fi_LMAC_2026_5.json \
-  --output-dir ./output
-
-# Report only (no chart, no matplotlib needed)
-python3 sprint_report.py -c sprint_report_config.md -d sprint_data_*.json --report-only
-
-# Chart only
-python3 sprint_report.py -c sprint_report_config.md -d sprint_data_*.json --chart-only
-
-# Generate report format reference
-python3 sprint_report.py --generate-format -o ./output
-```
-
-### Using the AI Assistant
-
-You can also use the Cursor AI assistant to run the tools:
-
-- **Full sprint report**: "Generate a sprint report using `sprint_report_config.md`"
-- **Mid-sprint check**: "Generate a sprint report as of Mar 10 using the config"
-- **Check today's logs**: "Using `sprint_report_config.md`, who hasn't logged work today?"
-- **Specific person**: "Show me Kiran's planned vs logged from the config"
----
-
-## File Structure
+## App layout
 
 ```
-sprint_tools/
-├── run.sh                   # Main entry point (orchestrates everything)
-├── sprint_report_config.md  # Configuration (edit per sprint)
-├── fetch_via_mcp.py         # Fetches Jira data (MCP gateway or direct REST) → JSON
-├── sprint_report.py         # Generates report + chart from JSON
-├── config_parser.py         # Parses sprint_report_config.md
-├── report_generator.py      # Produces the markdown text report
-├── report_format.py         # REPORT_FORMAT.md content (field reference)
-├── burndown_chart.py        # Produces the burndown PNG
-├── utils.py                 # Shared helpers (Jira time parsing, etc.)
-├── export_sprint_data.py    # Schema docs + manual data conversion helpers
-├── .env.defaults            # Default config (JIRA_BASE_URL); copy to .env to override
-├── requirements.txt         # Python dependencies
-└── README.md                # This file
-```
-
----
-
-## Data Flow
-
-```
-Jira (MCP or REST) ──→ fetch_via_mcp.py ──→ sprint_data_*.json ─┐
-                                                                  │
-sprint_report_config.md ──────────────────────────────────────────┤
-                                                                  │
-                                                                  ▼
-                                                         sprint_report.py
-                                                          (orchestrator)
-                                                            │       │
-                                                            ▼       ▼
-                                                   report_generator  burndown_chart
-                                                         .py              .py
-                                                            │       │
-                                                            ▼       ▼
-                                                 sprint_report_*.md  sprint_burndown_*.png
-```
-
----
-
-## Report Sections
-
-The generated report includes these sections (see `REPORT_FORMAT.md` for detailed field descriptions):
-
-1. **Logged Hours by Person — Stories / Tasks** — weekday worklog tables
-2. **Sprint KPI Summary** — one sprint-level KPI table with implemented metrics plus `N/A` placeholders
-3. **Daily Log Gaps** — days with no logged work
-4. **Sub-task Validation** — remaining work or worklogs on sub-tasks
-5. **Planned vs Capacity** — effective days/hours, planned hours, and utilization
-6. **Sprint Completion & Velocity** — completion rate, story-point velocity, per-person breakdown
-7. **Sprint Tickets — Status & Remaining Work** — end-of-sprint ticket snapshot
-8. **Burndown Chart** — stacked daily logged hours
-
-To generate the full field reference:
-```bash
-./run.sh --generate-format
-# or
-python3 sprint_report.py --generate-format -o ./output
-```
-
----
-
-## Sprint Workflow Checklist
-
-Before each sprint:
-1. Update `sprint_report_config.md`:
-   - Sprint name (must match Jira exactly)
-   - Team members (add/remove, set included/excluded)
-   - Planned leaves
-   - Any excluded tickets
-2. Run `pip install -r requirements.txt` (first time or after updates)
-3. Verify Jira access: either MCP gateway (`~/.cursor/mcp.json`) or `JIRA_TOKEN` in `.env`
-
-Generate the report:
-```bash
-./run.sh --board-id 1325
+gui/
+├── app.py                 # Entry: python -m gui.app
+├── main_window.py         # Four-step navigation
+├── settings.py            # Encrypted creds + app-data paths
+├── pages/
+│   ├── settings_page.py
+│   ├── sprint_select_page.py
+│   ├── config_page.py
+│   └── generate_page.py
+└── workers/               # Background Jira fetch
+build_exe.py               # → dist/SprintReport*
 ```
 
 ---
@@ -419,67 +159,15 @@ Generate the report:
 
 | Issue | Fix |
 |-------|-----|
-| `MCP gateway failed: ...` | MCP is down or misconfigured; script auto-falls back to direct REST API |
-| `No Jira PAT found` | Set `JIRA_TOKEN` in `.env`, env var, or pass `--jira-token`. Or configure MCP in Cursor |
-| `Error: sprint not found` | Check sprint name in config matches Jira exactly (case-sensitive) |
-| `ModuleNotFoundError: matplotlib` | Run `pip install -r requirements.txt` |
-| `Story points showing as N/A` | Your Jira uses `customfield_10344` — this is already configured |
-| Burndown chart looks empty | Check that team members have logged worklogs in Jira for the sprint dates |
-| Pre-sprint tickets inflating metrics | They are auto-detected and excluded; check the "Carried-Over" section |
+| App asks for credentials every time | Save on the Settings page; confirm write access to the app-data folder |
+| Sprint list empty / load fails | Check Jira URL + PAT on Settings; confirm board search text matches |
+| Empty burndown | Confirm included teammates have worklogs in the sprint date range |
+| `ModuleNotFoundError: PySide6` | `pip install -r requirements-gui.txt` |
+| Exe build fails on another OS | Build on the target OS; PyInstaller is not cross-platform |
+| Unexpected crash | Check `%APPDATA%\SprintReport\logs\` (or `~/.config/SprintReport/logs/` on Linux) |
 
 ---
 
-## Data JSON Schema
+## License / internal use
 
-The intermediate JSON file (`sprint_data_*.json`) has this structure:
-
-```json
-{
-  "sprint": {
-    "name": "Sprint_Name",
-    "start_date": "2026-03-04",
-    "end_date": "2026-03-17",
-    "goal": "Optional sprint goal"
-  },
-  "issues": [
-    {
-      "key": "PROJ-123",
-      "summary": "Ticket title",
-      "status": "In Progress",
-      "status_category": "In Progress",
-      "issuetype_name": "Sub-task",
-      "issuetype_subtask": true,
-      "has_subtasks": false,
-      "type": "Sub-task",
-      "assignee": "Jane Doe",
-      "estimate_hours": 16.0,
-      "estimate_raw": "2d",
-      "remaining_estimate_hours": 8.0,
-      "remaining_estimate_raw": "1d",
-      "story_points": 3.0,
-      "resolution_date": "",
-      "parent_key": "PROJ-100",
-      "added_to_sprint_at": "2026-03-06T10:15:00+00:00",
-      "added_after_sprint_start": true
-    }
-  ],
-  "worklogs": {
-    "PROJ-123": [
-      {
-        "started": "2026-03-05",
-        "seconds": 28800,
-        "author": "Jane Doe"
-      }
-    ]
-  }
-}
-```
-
-`type` is **`Story`**, **`Task`**, or **`Sub-task`**, derived from Jira **issue type** and **parent** link (see `utils.classify_issue_bucket`). Older JSON may still say `Parent` / `Standalone`; the report normalizes those to Story / Task.
-
-When Jira history is available, issues can also include `added_to_sprint_at` and `added_after_sprint_start`, which are used for the KPI summary table's backlog churn metric.
-
-To generate a blank template:
-```bash
-python3 export_sprint_data.py --template -o sprint_data.json
-```
+Internal tooling for sprint reporting against Jira. Keep PATs out of git — the app encrypts tokens in local settings (and can fall back to a local `.env` next to the executable).

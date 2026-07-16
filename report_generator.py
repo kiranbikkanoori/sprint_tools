@@ -57,33 +57,6 @@ class SprintWorkReport:
 
 
 @dataclass
-class PersonCapacity:
-    """Per-person capacity / planned / logged figures for the Planned vs Capacity table."""
-
-    name: str
-    work_days: float
-    meeting_days: float
-    leave_days: float
-    other_hours: float
-    effective_days: float
-    capacity_hours: float
-    planned_hours: float
-    logged_hours: float
-
-    @property
-    def plan_pct(self) -> float | None:
-        if self.capacity_hours <= 1e-6:
-            return None
-        return self.planned_hours / self.capacity_hours * 100.0
-
-    @property
-    def util_pct(self) -> float | None:
-        if self.capacity_hours <= 1e-6:
-            return None
-        return self.logged_hours / self.capacity_hours * 100.0
-
-
-@dataclass
 class TicketRow:
     """One row in the Sprint Tickets — Status & Remaining Work table."""
 
@@ -319,19 +292,15 @@ def build_sprint_work_report(
     )
 
 
-def build_capacity_rows(
+def build_effective_days_by_person(
     config: SprintConfig,
-    issues: list[dict],
     work_report: SprintWorkReport,
-) -> list[PersonCapacity]:
+) -> dict[str, float]:
     """
-    Build per-person capacity / planned / logged rows for the Planned vs Capacity table.
+    Build effective person-days for included members.
 
-    Capacity uses the **full** sprint (Report Date is ignored) — this section is meant
-    for end-of-sprint review. Planned hours sum the **original estimate** of every
-    Story / Task whose ``assignee`` matches the person, after dropping
-    ``config.excluded_tickets``. Sub-tasks are not counted; parent stories are taken
-    at face value (their estimate is **not** replaced by the sum of sub-task estimates).
+    This keeps the velocity denominator aligned with the previous capacity model:
+    effective days = sprint weeks × 5 − meeting reserve − planned leaves.
     """
     work_days = float(config.sprint_duration_weeks) * 5.0
     meeting_days = float(config.meeting_days_reserved)
@@ -340,51 +309,12 @@ def build_capacity_rows(
     for entry in config.planned_leaves:
         leaves_by_name[entry.name] += float(entry.days)
 
-    excl_hours_by_name: dict[str, float] = defaultdict(float)
-    for entry in config.other_exclusions:
-        excl_hours_by_name[entry.name] += float(entry.hours)
-
-    excluded = set(config.excluded_tickets)
-    planned_by_name: dict[str, float] = defaultdict(float)
-    for issue in issues:
-        if issue.get("key") in excluded:
-            continue
-        if effective_issue_type(issue) not in ("Story", "Task"):
-            continue
-        assignee = (issue.get("assignee") or "").strip()
-        if not assignee:
-            continue
-        est = issue.get("estimate_hours")
-        try:
-            est_val = float(est) if est is not None else 0.0
-        except (TypeError, ValueError):
-            est_val = 0.0
-        if est_val <= 0:
-            continue
-        planned_by_name[assignee] += est_val
-
-    rows: list[PersonCapacity] = []
+    out: dict[str, float] = {}
     for name in work_report.included_names:
         leave_d = leaves_by_name.get(name, 0.0)
-        other_h = excl_hours_by_name.get(name, 0.0)
         eff_d = max(0.0, work_days - meeting_days - leave_d)
-        cap_h = max(0.0, eff_d * 8.0 - other_h)
-        pdata = work_report.daily_story_task.get(name, {})
-        logged_h = sum(c["story"] + c["task"] for c in pdata.values())
-        rows.append(
-            PersonCapacity(
-                name=name,
-                work_days=work_days,
-                meeting_days=meeting_days,
-                leave_days=leave_d,
-                other_hours=other_h,
-                effective_days=eff_d,
-                capacity_hours=cap_h,
-                planned_hours=planned_by_name.get(name, 0.0),
-                logged_hours=logged_h,
-            )
-        )
-    return rows
+        out[name] = eff_d
+    return out
 
 
 def _fmt_d(x: float) -> str:
@@ -467,7 +397,7 @@ def build_ticket_rows(
 def build_completion_velocity(
     config: SprintConfig,
     issues: list[dict],
-    capacity_rows: list[PersonCapacity],
+    effective_days_by_name: dict[str, float],
 ) -> TeamCompletion:
     """
     Compute Sprint Completion Rate (tickets + story points) and team Velocity.
@@ -479,8 +409,7 @@ def build_completion_velocity(
     contribute to team totals only.
     """
     excluded = set(config.excluded_tickets)
-    included = [r.name for r in capacity_rows]
-    eff_by_name = {r.name: r.effective_days for r in capacity_rows}
+    included = list(effective_days_by_name)
     per_person: dict[str, dict] = {
         n: {"committed": 0, "done": 0, "sp_c": 0.0, "sp_d": 0.0} for n in included
     }
@@ -527,7 +456,7 @@ def build_completion_velocity(
             tickets_done=per_person[n]["done"],
             sp_committed=per_person[n]["sp_c"],
             sp_delivered=per_person[n]["sp_d"],
-            effective_days=eff_by_name.get(n, 0.0),
+            effective_days=effective_days_by_name.get(n, 0.0),
         )
         for n in included
     ]
@@ -537,7 +466,7 @@ def build_completion_velocity(
         tickets_done=t_done,
         sp_committed=sp_committed,
         sp_delivered=sp_delivered,
-        effective_days=sum(r.effective_days for r in capacity_rows),
+        effective_days=sum(effective_days_by_name.values()),
         rows=rows,
     )
 
@@ -545,7 +474,6 @@ def build_completion_velocity(
 def build_kpi_summary(
     config: SprintConfig,
     issues: list[dict],
-    capacity_rows: list[PersonCapacity],
     team_completion: TeamCompletion,
 ) -> list[KpiSummaryRow]:
     excluded = set(config.excluded_tickets)
@@ -673,9 +601,9 @@ def generate_text_report(
     """
     Return markdown sprint report (story vs task logging model).
 
-    When ``issues`` is provided, the **Planned vs Capacity** section is included
-    (recommended). Pass ``None`` to suppress it (kept for backward-compat with any
-    older caller that doesn't have the issues list at hand).
+    When ``issues`` is provided, the KPI summary plus ticket-based completion
+    sections are included. Pass ``None`` to suppress them (kept for backward-compat
+    with any older caller that doesn't have the issues list at hand).
     """
     all_dates = working_dates_in_range(sprint_start, sprint_end)
     report_cap = _log_window_end(
@@ -766,12 +694,11 @@ def generate_text_report(
         "Total (tasks)",
     )
 
-    cap_rows: list[PersonCapacity] | None = None
     team_completion: TeamCompletion | None = None
     if issues is not None:
-        cap_rows = build_capacity_rows(config, issues, work_report)
-        team_completion = build_completion_velocity(config, issues, cap_rows)
-        kpi_rows = build_kpi_summary(config, issues, cap_rows, team_completion)
+        effective_days_by_name = build_effective_days_by_person(config, work_report)
+        team_completion = build_completion_velocity(config, issues, effective_days_by_name)
+        kpi_rows = build_kpi_summary(config, issues, team_completion)
         churn_rows = build_backlog_churn_rows(config, issues, sprint_start_raw)
         ln("---")
         ln("## Sprint KPI Summary")
@@ -839,78 +766,9 @@ def generate_text_report(
             )
     ln()
 
-    # ── Planned vs Capacity ─────────────────────────────────────────────
+    # ── Sprint Completion & Velocity ─────────────────────────────────
     if issues is not None:
-        assert cap_rows is not None
         assert team_completion is not None
-        ln("---")
-        ln("## Planned vs Capacity")
-        ln()
-        ln(
-            "> **Capacity model:** Working days = sprint weeks × 5. "
-            "Effective days = Working days − Meeting reserve − Planned leaves. "
-            "Capacity (h) = Effective days × 8 − Other exclusion hours.<br>"
-            "**Planned (h)** sums the **original estimate** of each **Story / Task** "
-            "assigned to the person and inside the sprint, with **excluded tickets** "
-            "dropped. Sub-tasks are not counted; parent stories are taken at face value "
-            "(their estimate is **not** replaced by the sum of sub-task estimates).<br>"
-            "**Logged (h)** matches the totals shown in the Stories + Tasks tables above "
-            "(worklog author, full sprint window).<br>"
-            "**Plan %** = Planned ÷ Capacity. **Util %** = Logged ÷ Capacity. "
-            "Intended for **end-of-sprint** review; capacity is always computed for the "
-            "full sprint regardless of Report Date."
-        )
-        ln()
-        if not cap_rows:
-            ln("*No included team members.*")
-            ln()
-        else:
-            ln(
-                "| Person | Work d | Mtg d | Leave d | Other (h) | Eff. d | "
-                "Capacity (h) | Planned (h) | Plan % | Logged (h) | Util % |"
-            )
-            ln(
-                "|--------|------:|------:|--------:|----------:|------:|"
-                "-------------:|------------:|------:|-----------:|------:|"
-            )
-            sums = {
-                "work": 0.0, "mtg": 0.0, "leave": 0.0, "other": 0.0,
-                "eff": 0.0, "cap": 0.0, "planned": 0.0, "logged": 0.0,
-            }
-            for r in cap_rows:
-                sums["work"] += r.work_days
-                sums["mtg"] += r.meeting_days
-                sums["leave"] += r.leave_days
-                sums["other"] += r.other_hours
-                sums["eff"] += r.effective_days
-                sums["cap"] += r.capacity_hours
-                sums["planned"] += r.planned_hours
-                sums["logged"] += r.logged_hours
-                plan_p = "—" if r.plan_pct is None else f"{int(round(r.plan_pct))}%"
-                util_p = "—" if r.util_pct is None else f"{int(round(r.util_pct))}%"
-                ln(
-                    f"| {r.name} | {_fmt_d(r.work_days)} | {_fmt_d(r.meeting_days)} | "
-                    f"{_fmt_d(r.leave_days)} | {_fmt_d(r.other_hours)} | "
-                    f"{_fmt_d(r.effective_days)} | {r.capacity_hours:.1f} | "
-                    f"{r.planned_hours:.1f} | {plan_p} | {r.logged_hours:.1f} | {util_p} |"
-                )
-            team_plan = (
-                sums["planned"] / sums["cap"] * 100.0 if sums["cap"] > 1e-6 else None
-            )
-            team_util = (
-                sums["logged"] / sums["cap"] * 100.0 if sums["cap"] > 1e-6 else None
-            )
-            plan_p = "—" if team_plan is None else f"**{int(round(team_plan))}%**"
-            util_p = "—" if team_util is None else f"**{int(round(team_util))}%**"
-            ln(
-                f"| **Team total** | **{_fmt_d(sums['work'])}** | **{_fmt_d(sums['mtg'])}** | "
-                f"**{_fmt_d(sums['leave'])}** | **{_fmt_d(sums['other'])}** | "
-                f"**{_fmt_d(sums['eff'])}** | **{sums['cap']:.1f}** | "
-                f"**{sums['planned']:.1f}** | {plan_p} | **{sums['logged']:.1f}** | {util_p} |"
-            )
-            ln()
-
-        # ── Sprint Completion & Velocity ─────────────────────────────────
         tc = team_completion
         ln("---")
         ln("## Sprint Completion & Velocity")
@@ -922,7 +780,8 @@ def generate_text_report(
             "`status` is **Resolved** (matches the Sprint Tickets table below). Reported "
             "at both **ticket** and **story-point** granularity. Target ≥ 90%.<br>"
             "**Velocity** — story points delivered ÷ team **effective person-days** "
-            "(taken from the Planned vs Capacity table). Sub-tasks are not counted; "
+            "(derived from sprint weeks, meeting reserve, and planned leaves). "
+            "Sub-tasks are not counted; "
             "parent stories carry the points.<br>"
             "Unassigned tickets contribute to **team totals only**; they don't appear in "
             "the per-person table. Intended for **end-of-sprint** review."
