@@ -30,6 +30,7 @@ hidden_imports = [
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
+    "PySide6.QtSvg",  # Help tab README images (SVG hero / workflow)
 ]
 
 # matplotlib backend must be importable.
@@ -46,6 +47,14 @@ datas = []
 env_defaults = ROOT / ".env.defaults"
 if env_defaults.exists():
     datas.append((str(env_defaults), "."))
+
+# In-app Help tab: GUI README + images (hero, workflow, burndown proof).
+readme = ROOT / "README.md"
+if readme.exists():
+    datas.append((str(readme), "."))
+assets_readme = ROOT / "assets" / "readme"
+if assets_readme.is_dir():
+    datas.append((str(assets_readme), "assets/readme"))
 
 # Markdown reads its own package metadata at runtime to enumerate built-in
 # extensions. Without this, "tables" / "fenced_code" silently disappear.

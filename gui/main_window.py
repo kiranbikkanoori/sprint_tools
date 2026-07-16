@@ -22,9 +22,18 @@ log = logging.getLogger(__name__)
 from gui import APP_NAME, __version__
 from gui.pages.config_page import ConfigPage
 from gui.pages.generate_page import GeneratePage
+from gui.pages.help_page import HelpPage
 from gui.pages.settings_page import SettingsPage
 from gui.pages.sprint_select_page import SprintSelectPage
 from gui.settings import load_settings, save_settings
+
+
+# Stack indices — keep workflow steps numbered 1–4 in the sidebar.
+IDX_HELP = 0
+IDX_SETTINGS = 1
+IDX_SPRINT = 2
+IDX_CONFIG = 3
+IDX_GENERATE = 4
 
 
 class MainWindow(QMainWindow):
@@ -35,22 +44,25 @@ class MainWindow(QMainWindow):
         self.resize(1100, 800)
 
         # Pages
+        self.help_page = HelpPage()
         self.settings_page = SettingsPage(self.settings)
         self.sprint_page = SprintSelectPage(self.settings)
         self.config_page = ConfigPage(self.settings)
         self.generate_page = GeneratePage(self.settings)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(self.settings_page)   # 0
-        self.stack.addWidget(self.sprint_page)     # 1
-        self.stack.addWidget(self.config_page)     # 2
-        self.stack.addWidget(self.generate_page)   # 3
+        self.stack.addWidget(self.help_page)       # 0 Help
+        self.stack.addWidget(self.settings_page)   # 1 Settings
+        self.stack.addWidget(self.sprint_page)     # 2 Sprint
+        self.stack.addWidget(self.config_page)     # 3 Configure
+        self.stack.addWidget(self.generate_page)   # 4 Generate
 
         # Sidebar nav buttons
         self.nav_buttons: list[QPushButton] = []
         nav = QVBoxLayout()
         nav.setSpacing(4)
         for i, label in enumerate([
+            "Help",
             "1. Settings",
             "2. Sprint",
             "3. Configure",
@@ -89,12 +101,12 @@ class MainWindow(QMainWindow):
         self.sprint_page.sprint_loaded.connect(self._on_sprint_loaded)
         self.config_page.config_ready.connect(self._on_config_ready)
 
-        # Default page: Settings if no creds, otherwise Sprint
+        # Default page: Settings if no creds, otherwise Sprint (not Help)
         creds = self.settings.effective_credentials()
         if creds.get("JIRA_BASE_URL") and (creds.get("JIRA_TOKEN") or creds.get("JIRA_USER")):
-            self._goto(1)
+            self._goto(IDX_SPRINT)
         else:
-            self._goto(0)
+            self._goto(IDX_SETTINGS)
 
     # ── nav ─────────────────────────────────────────────────────────────
 
@@ -107,7 +119,7 @@ class MainWindow(QMainWindow):
 
     def _on_settings_saved(self) -> None:
         self.statusBar().showMessage("Settings saved.", 3000)
-        self._goto(1)
+        self._goto(IDX_SPRINT)
 
     def _on_sprint_loaded(self, payload: dict, sprint: dict) -> None:
         log.info("MainWindow._on_sprint_loaded entered: sprint=%s, issues=%d",
@@ -126,7 +138,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Loaded {sprint.get('name', '')} — {len(payload.get('issues', []))} issues.", 5000,
             )
-            self._goto(2)
+            self._goto(IDX_CONFIG)
             log.info("Navigated to Configure page")
         except Exception:
             log.exception("Failed after populate (navigation step)")
@@ -134,8 +146,12 @@ class MainWindow(QMainWindow):
 
     def _on_config_ready(self, cfg) -> None:
         self.generate_page.set_inputs(cfg, self.config_page.payload)
-        self._goto(3)
+        self._goto(IDX_GENERATE)
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt API)
         save_settings(self.settings)
+        try:
+            self.help_page.cleanup()
+        except Exception:
+            log.debug("help_page.cleanup failed", exc_info=True)
         super().closeEvent(event)

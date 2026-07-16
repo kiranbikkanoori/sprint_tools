@@ -74,6 +74,20 @@ def app_executable_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def bundled_resource_root() -> Path:
+    """Root that holds packaged files such as README.md and assets/.
+
+    In a PyInstaller one-file build this is ``sys._MEIPASS``. When running from
+    source it is the project root (parent of ``gui/``).
+    """
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
 # ── Encryption (machine-bound, not user-supplied passphrase) ───────────────
 
 def _machine_key() -> bytes:

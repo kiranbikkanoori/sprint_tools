@@ -78,6 +78,8 @@ Output lands in `dist/` as `SprintReport.exe` (Windows) or `SprintReport` (macOS
 3. **Configure** → set **report date**, uncheck managers, add leaves / exclusions if needed  
 4. **Generate** → preview report + chart → open the output folder  
 
+Use the **Help** sidebar item anytime for this guide inside the app (also bundled in the `.exe`).
+
 ---
 
 ## Where files are stored
@@ -142,9 +144,10 @@ Leave rows are matched to people by **name**. The name must match a row in **Tea
 ```
 gui/
 ├── app.py                 # Entry: python -m gui.app
-├── main_window.py         # Four-step navigation
+├── main_window.py         # Help + four-step navigation
 ├── settings.py            # Encrypted creds + app-data paths
 ├── pages/
+│   ├── help_page.py       # In-app README
 │   ├── settings_page.py
 │   ├── sprint_select_page.py
 │   ├── config_page.py
