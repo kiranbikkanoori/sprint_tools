@@ -113,7 +113,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(ROOT / "assets" / "app" / "icon.ico")
-    if (ROOT / "assets" / "app" / "icon.ico").exists()
-    else None,
+    # Embedded into the Windows .exe so File Explorer shows this icon
+    # (runtime QIcon only affects the open window / taskbar).
+    icon=str(ROOT / "assets" / "app" / "icon.ico"),
 )
