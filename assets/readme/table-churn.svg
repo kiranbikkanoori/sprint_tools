@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="220" viewBox="0 0 1200 220" role="img" aria-labelledby="title desc">
+  <title id="title">Backlog churn ticket table shape</title>
+  <desc id="desc">Mock of the Tickets Added After Sprint Start table.</desc>
+  <rect width="1200" height="220" rx="20" fill="#F7F9FC"/>
+  <rect x="1" y="1" width="1198" height="218" rx="19" fill="none" stroke="#D5DEEC"/>
+  <text x="40" y="42" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700" fill="#0F172A">Tickets Added After Sprint Start</text>
+  <text x="40" y="68" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#64748B">Only appears when backlog churn is non-zero</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" transform="translate(40 90)">
+    <rect width="1120" height="32" fill="#EEF3FA"/>
+    <text x="12" y="21" font-weight="700" fill="#0B3D91">Key</text>
+    <text x="140" y="21" font-weight="700" fill="#0B3D91">Summary</text>
+    <text x="420" y="21" font-weight="700" fill="#0B3D91">Assignee</text>
+    <text x="620" y="21" font-weight="700" fill="#0B3D91">Status</text>
+    <text x="780" y="21" font-weight="700" fill="#0B3D91">Sprint started</text>
+    <text x="960" y="21" font-weight="700" fill="#0B3D91">Added to sprint</text>
+
+    <rect y="32" width="1120" height="36" fill="#FFFFFF"/>
+    <text x="12" y="55" fill="#2176FF">PROJ-401</text>
+    <text x="140" y="55" fill="#334155">Late scope item...</text>
+    <text x="420" y="55" fill="#334155">Alex</text>
+    <text x="620" y="55" fill="#334155">In Progress</text>
+    <text x="780" y="55" fill="#64748B">May 27 09:00</text>
+    <text x="960" y="55" fill="#64748B">May 29 14:20</text>
+
+    <rect y="68" width="1120" height="36" fill="#FAFBFC"/>
+    <text x="12" y="91" fill="#2176FF">PROJ-418</text>
+    <text x="140" y="91" fill="#334155">Customer request...</text>
+    <text x="420" y="91" fill="#334155">Sam</text>
+    <text x="620" y="91" fill="#334155">To Do</text>
+    <text x="780" y="91" fill="#64748B">May 27 09:00</text>
+    <text x="960" y="91" fill="#64748B">Jun 02 11:05</text>
+  </g>
+</svg>

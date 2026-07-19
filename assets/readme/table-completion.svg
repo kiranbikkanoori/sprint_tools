@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
+  <title id="title">Completion and velocity tables shape</title>
+  <desc id="desc">Mock of the team metrics table and the per-person completion table.</desc>
+  <rect width="1200" height="300" rx="20" fill="#F7F9FC"/>
+  <rect x="1" y="1" width="1198" height="298" rx="19" fill="none" stroke="#D5DEEC"/>
+  <text x="40" y="42" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700" fill="#0F172A">Sprint Completion and Velocity</text>
+  <text x="40" y="68" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#64748B">Team summary first  |  then per-person breakdown</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12">
+    <text x="40" y="100" font-weight="700" fill="#0B3D91">Team</text>
+    <rect x="40" y="110" width="520" height="32" fill="#EEF3FA"/>
+    <text x="56" y="131" font-weight="700" fill="#0B3D91">Metric</text>
+    <text x="320" y="131" font-weight="700" fill="#0B3D91">Value</text>
+    <text x="420" y="131" font-weight="700" fill="#0B3D91">Target</text>
+    <rect x="40" y="142" width="520" height="28" fill="#FFFFFF"/>
+    <text x="56" y="161" fill="#334155">Completion rate (tickets)</text>
+    <text x="320" y="161" font-weight="700" fill="#2176FF">83%</text>
+    <text x="420" y="161" fill="#64748B">&gt;= 90%</text>
+    <rect x="40" y="170" width="520" height="28" fill="#FAFBFC"/>
+    <text x="56" y="189" fill="#334155">Velocity (SP / person-day)</text>
+    <text x="320" y="189" font-weight="700" fill="#0F172A">0.70</text>
+    <text x="420" y="189" fill="#64748B">-</text>
+
+    <text x="600" y="100" font-weight="700" fill="#0B3D91">Per-person</text>
+    <rect x="600" y="110" width="560" height="32" fill="#EEF3FA"/>
+    <text x="616" y="131" font-weight="700" fill="#0B3D91">Person</text>
+    <text x="820" y="131" font-weight="700" fill="#0B3D91">Tickets %</text>
+    <text x="960" y="131" font-weight="700" fill="#0B3D91">SP / day</text>
+    <rect x="600" y="142" width="560" height="28" fill="#FFFFFF"/>
+    <text x="616" y="161" fill="#334155">Alex</text>
+    <text x="820" y="161" fill="#334155">83%</text>
+    <text x="960" y="161" fill="#334155">1.00</text>
+    <rect x="600" y="170" width="560" height="28" fill="#FAFBFC"/>
+    <text x="616" y="189" fill="#334155">Sam</text>
+    <text x="820" y="189" fill="#334155">100%</text>
+    <text x="960" y="189" fill="#334155">0.71</text>
+    <rect x="600" y="198" width="560" height="28" fill="#FFFFFF"/>
+    <text x="616" y="217" fill="#334155">...</text>
+    <text x="820" y="217" fill="#94A3B8">done / committed</text>
+    <text x="960" y="217" fill="#94A3B8">velocity</text>
+  </g>
+
+  <text x="40" y="270" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#64748B">Effective person-days = sprint weeks x 5 - meeting reserve - planned leaves</text>
+</svg>
