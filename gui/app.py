@@ -42,11 +42,24 @@ if sys.stderr is None:
 
 
 from PySide6.QtCore import Qt, qInstallMessageHandler, QtMsgType
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from gui import APP_NAME, APP_ORG
 from gui.main_window import MainWindow
-from gui.settings import app_data_dir
+from gui.settings import app_data_dir, bundled_resource_root
+
+
+def _load_app_icon() -> QIcon:
+    """Load the bundled Sprint Report icon (PNG preferred, ICO fallback)."""
+    root = bundled_resource_root()
+    for rel in ("assets/app/icon.png", "assets/app/icon.ico", "assets/app/icon-256.png"):
+        path = root / rel
+        if path.is_file():
+            icon = QIcon(str(path))
+            if not icon.isNull():
+                return icon
+    return QIcon()
 
 
 def _setup_logging() -> Path:
@@ -143,9 +156,14 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_ORG)
     app.setStyle("Fusion")
+    icon = _load_app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     logging.info("QApplication created")
 
     win = MainWindow()
+    if not icon.isNull():
+        win.setWindowIcon(icon)
     logging.info("MainWindow created")
     win.show()
     logging.info("MainWindow shown — entering event loop")

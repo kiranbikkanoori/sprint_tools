@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Sprint Report</title>
+  <desc id="desc">App icon: rounded blue tile with a report document and data table.</desc>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2176FF"/>
+      <stop offset="100%" stop-color="#0B3D91"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#tile)"/>
+
+  <!-- document sheet -->
+  <rect x="108" y="88" width="296" height="336" rx="28" fill="#F7F9FC"/>
+  <rect x="108" y="88" width="296" height="64" rx="28" fill="#EEF3FA"/>
+  <rect x="108" y="124" width="296" height="28" fill="#EEF3FA"/>
+
+  <!-- title accent -->
+  <rect x="140" y="114" width="120" height="16" rx="8" fill="#2176FF"/>
+  <rect x="276" y="118" width="88" height="10" rx="5" fill="#94A3B8"/>
+
+  <!-- table header -->
+  <rect x="140" y="188" width="232" height="40" rx="10" fill="#2176FF"/>
+  <circle cx="164" cy="208" r="5" fill="#F7F9FC"/>
+  <rect x="182" y="203" width="48" height="10" rx="5" fill="#F7F9FC"/>
+  <rect x="250" y="203" width="40" height="10" rx="5" fill="#D6E4FF"/>
+  <rect x="310" y="203" width="40" height="10" rx="5" fill="#D6E4FF"/>
+
+  <!-- table rows -->
+  <rect x="140" y="236" width="232" height="36" rx="8" fill="#FFFFFF" stroke="#D5DEEC"/>
+  <rect x="156" y="248" width="56" height="10" rx="5" fill="#64748B"/>
+  <rect x="250" y="248" width="36" height="10" rx="5" fill="#94A3B8"/>
+  <rect x="318" y="248" width="28" height="10" rx="5" fill="#2176FF"/>
+
+  <rect x="140" y="280" width="232" height="36" rx="8" fill="#F8FAFC" stroke="#D5DEEC"/>
+  <rect x="156" y="292" width="64" height="10" rx="5" fill="#64748B"/>
+  <rect x="250" y="292" width="36" height="10" rx="5" fill="#94A3B8"/>
+  <rect x="318" y="292" width="28" height="10" rx="5" fill="#2176FF"/>
+
+  <rect x="140" y="324" width="232" height="36" rx="8" fill="#FFFFFF" stroke="#D5DEEC"/>
+  <rect x="156" y="336" width="48" height="10" rx="5" fill="#64748B"/>
+  <rect x="250" y="336" width="36" height="10" rx="5" fill="#94A3B8"/>
+  <rect x="318" y="336" width="28" height="10" rx="5" fill="#0B3D91"/>
+
+  <!-- total row -->
+  <rect x="140" y="368" width="232" height="36" rx="8" fill="#E8F0FF" stroke="#D5DEEC"/>
+  <rect x="156" y="380" width="44" height="10" rx="5" fill="#0B3D91"/>
+  <rect x="310" y="380" width="36" height="10" rx="5" fill="#2176FF"/>
+</svg>

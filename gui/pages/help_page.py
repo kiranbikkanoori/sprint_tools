@@ -28,78 +28,10 @@ from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QLabel, QTextBrowser, QVBoxLayout, QWidget
 
 from gui.settings import bundled_resource_root
+from gui.theme import app_theme
+from report_style import DARK, LIGHT
 
 log = logging.getLogger(__name__)
-
-_HELP_CSS = """
-<style>
-  body {
-    font-family: 'Segoe UI', sans-serif;
-    font-size: 13px;
-    color: #222;
-    margin: 12px 18px 24px 18px;
-  }
-  h1 {
-    font-size: 22px;
-    border-bottom: 2px solid #2176FF;
-    padding-bottom: 6px;
-    margin-top: 8px;
-  }
-  h2 {
-    font-size: 17px;
-    color: #2176FF;
-    margin-top: 28px;
-    border-bottom: 1px solid #ddd;
-    padding-bottom: 4px;
-  }
-  h3 {
-    font-size: 14px;
-    color: #0F172A;
-    margin-top: 18px;
-  }
-  table {
-    border-collapse: collapse;
-    margin: 8px 0 16px 0;
-  }
-  th, td {
-    border: 1px solid #c0c0c0;
-    padding: 4px 8px;
-    vertical-align: top;
-  }
-  th {
-    background: #f0f4ff;
-    text-align: left;
-    font-weight: 600;
-  }
-  td code, code {
-    background: #f5f5f5;
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-size: 12px;
-  }
-  pre {
-    background: #f5f7fb;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    padding: 10px 12px;
-  }
-  tr:nth-child(even) td { background: #fafbfc; }
-  blockquote {
-    border-left: 3px solid #2176FF;
-    margin: 8px 0;
-    padding: 4px 12px;
-    background: #f7faff;
-    color: #444;
-  }
-  hr {
-    border: 0;
-    border-top: 1px solid #ddd;
-    margin: 18px 0;
-  }
-  p { line-height: 1.45; margin: 8px 0; }
-  ul, ol { margin: 8px 0 8px 22px; }
-</style>
-"""
 
 _IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 _SRC_RE = re.compile(r"""\bsrc=["']([^"']+)["']""", re.IGNORECASE)
@@ -108,6 +40,94 @@ _ALT_RE = re.compile(r"""\balt=["']([^"']*)["']""", re.IGNORECASE)
 
 def _readme_path() -> Path:
     return bundled_resource_root() / "README.md"
+
+
+def _help_css(theme: str) -> str:
+    """Resolved Help stylesheet for QTextBrowser (light or dark)."""
+    c = DARK if theme == "dark" else LIGHT
+    return f"""
+<style>
+  body {{
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px;
+    color: {c['text']};
+    background: {c['page']};
+    margin: 12px 18px 24px 18px;
+  }}
+  h1 {{
+    font-size: 22px;
+    color: {c['text']};
+    border-bottom: 2px solid {c['accent']};
+    padding-bottom: 6px;
+    margin-top: 8px;
+  }}
+  h2 {{
+    font-size: 17px;
+    color: {c['accent']};
+    margin-top: 28px;
+    border-bottom: 1px solid {c['border']};
+    padding-bottom: 4px;
+  }}
+  h3 {{
+    font-size: 14px;
+    color: {c['accent_text']};
+    margin-top: 18px;
+  }}
+  table {{
+    border-collapse: collapse;
+    margin: 8px 0 16px 0;
+    background: {c['surface']};
+  }}
+  th, td {{
+    border: 1px solid {c['border']};
+    padding: 4px 8px;
+    vertical-align: top;
+    color: {c['text']};
+  }}
+  th {{
+    background: {c['header']};
+    color: {c['accent_text']};
+    text-align: left;
+    font-weight: 600;
+  }}
+  td code, code {{
+    background: {c['code_bg']};
+    color: {c['text']};
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 12px;
+  }}
+  pre {{
+    background: {c['blockquote_bg']};
+    border: 1px solid {c['border']};
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: {c['text']};
+  }}
+  tr:nth-child(even) td {{ background: {c['zebra']}; }}
+  blockquote {{
+    border-left: 3px solid {c['accent']};
+    margin: 8px 0;
+    padding: 4px 12px;
+    background: {c['blockquote_bg']};
+    color: {c['muted']};
+  }}
+  hr {{
+    border: 0;
+    border-top: 1px solid {c['border']};
+    margin: 18px 0;
+  }}
+  p, li {{
+    line-height: 1.45;
+    margin: 8px 0;
+    color: {c['text']};
+  }}
+  ul, ol {{ margin: 8px 0 8px 22px; color: {c['text']}; }}
+  strong {{ color: {c['text']}; }}
+  a {{ color: {c['accent']}; }}
+  em {{ color: {c['muted']}; }}
+</style>
+"""
 
 
 def _resolve_image_path(src: str, root: Path) -> Path | None:
@@ -185,7 +205,6 @@ def _rewrite_images(html: str, root: Path, cache_dir: Path, target_width: int) -
         if not src_m:
             return img_tag
 
-        # Skip tags we already normalized (avoids double-rasterizing).
         if re.search(r'\bwidth="\d+"', img_tag) and re.search(r'\bheight="\d+"', img_tag):
             src_path = _resolve_image_path(src_m.group(1), root)
             if src_path is not None:
@@ -221,14 +240,12 @@ def _rewrite_images(html: str, root: Path, cache_dir: Path, target_width: int) -
         alt_m = _ALT_RE.search(img_tag)
         alt = escape(alt_m.group(1)) if alt_m else escape(src_path.name)
         url = QUrl.fromLocalFile(str(dest.resolve())).toString()
-        # Explicit pixel width/height — percentage widths break QTextBrowser layout.
         return (
             f'<p align="center">'
             f'<img src="{url}" width="{width}" height="{height}" alt="{alt}" />'
             f"</p>"
         )
 
-    # Replace every <img> once, then unwrap nested <p><p><img/></p></p> from README.
     html = _IMG_TAG_RE.sub(lambda m: replace_img(m.group(0)), html)
     html = re.sub(
         r"<p\b[^>]*>\s*(<p align=\"center\">.*?</p>)\s*</p>",
@@ -259,10 +276,12 @@ def _markdown_to_body(text: str) -> str:
     )
 
 
-def _render_readme_html(text: str, root: Path, cache_dir: Path, target_width: int) -> str:
+def _render_readme_html(
+    text: str, root: Path, cache_dir: Path, target_width: int, theme: str,
+) -> str:
     body = _markdown_to_body(text)
     body = _rewrite_images(body, root, cache_dir, target_width)
-    return f"<html><head>{_HELP_CSS}</head><body>{body}</body></html>"
+    return f"<html><head>{_help_css(theme)}</head><body>{body}</body></html>"
 
 
 class HelpPage(QWidget):
@@ -276,33 +295,41 @@ class HelpPage(QWidget):
         except Exception:
             log.debug("PySide6.QtSvg not available; SVG Help images may fail", exc_info=True)
 
-        title = QLabel("<h2>Help</h2>")
-        subtitle = QLabel(
-            "In-app guide from <code>README.md</code> — same instructions as the "
-            "project homepage."
+        self.title = QLabel("Help")
+        self.subtitle = QLabel(
+            "In-app guide from README.md — same instructions as the project homepage."
         )
-        subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: #555;")
+        self.subtitle.setWordWrap(True)
+        self._apply_chrome_styles()
 
         self.view = QTextBrowser()
         self.view.setOpenExternalLinks(True)
-        # Avoid Qt trying to float/inline images with surrounding text.
         self.view.setLineWrapMode(QTextBrowser.LineWrapMode.WidgetWidth)
 
         self._cache_dir = Path(tempfile.mkdtemp(prefix="sprintreport-help-"))
         self._readme_text: str | None = None
         self._last_width = 0
+        self._last_theme = ""
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.setInterval(150)
         self._reload_timer.timeout.connect(self._reload_for_current_width)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
+        layout.addWidget(self.title)
+        layout.addWidget(self.subtitle)
         layout.addWidget(self.view, stretch=1)
 
         self.reload()
+
+    def _apply_chrome_styles(self) -> None:
+        theme = app_theme()
+        c = DARK if theme == "dark" else LIGHT
+        self.title.setStyleSheet(
+            f"font-size: 18px; font-weight: 700; color: {c['text']}; margin: 0;"
+        )
+        self.subtitle.setStyleSheet(f"color: {c['muted']};")
+        self.setStyleSheet(f"HelpPage {{ background: {c['page']}; }}")
 
     def cleanup(self) -> None:
         shutil.rmtree(self._cache_dir, ignore_errors=True)
@@ -316,15 +343,16 @@ class HelpPage(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        # Re-rasterize images when the pane gets meaningfully wider/narrower.
         self._reload_timer.start()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
+        self._apply_chrome_styles()
+        # Force re-theme when returning to Help (palette may have changed).
+        self._last_theme = ""
         self._reload_timer.start()
 
     def _content_width(self) -> int:
-        # Leave room for scrollbar + body margins.
         w = self.view.viewport().width() - 48
         if w < 320:
             w = max(320, self.width() - 80)
@@ -332,10 +360,12 @@ class HelpPage(QWidget):
 
     def reload(self) -> None:
         path = _readme_path()
+        theme = app_theme()
+        css = _help_css(theme)
         if not path.is_file():
             self._readme_text = None
             self.view.setHtml(
-                f"<html><head>{_HELP_CSS}</head><body>"
+                f"<html><head>{css}</head><body>"
                 f"<h2>Help unavailable</h2>"
                 f"<p>Could not find <code>{escape(str(path))}</code>.</p>"
                 f"<p>When building the executable, ensure <code>README.md</code> "
@@ -348,29 +378,35 @@ class HelpPage(QWidget):
         except OSError as exc:
             self._readme_text = None
             self.view.setHtml(
-                f"<html><head>{_HELP_CSS}</head><body>"
+                f"<html><head>{css}</head><body>"
                 f"<h2>Help unavailable</h2>"
                 f"<p>Failed to read README: {escape(str(exc))}</p>"
                 f"</body></html>"
             )
             return
         self._last_width = 0
+        self._last_theme = ""
         self._reload_for_current_width()
 
     def _reload_for_current_width(self) -> None:
         if self._readme_text is None:
             return
         width = self._content_width()
-        # Skip tiny changes to avoid flicker while dragging the window.
-        if self._last_width and abs(width - self._last_width) < 24:
+        theme = app_theme()
+        if (
+            self._last_width
+            and abs(width - self._last_width) < 24
+            and theme == self._last_theme
+        ):
             return
+        self._apply_chrome_styles()
         root = bundled_resource_root()
         self.view.document().setBaseUrl(QUrl.fromLocalFile(str(root) + "/"))
         html = _render_readme_html(
-            self._readme_text, root, self._cache_dir, width,
+            self._readme_text, root, self._cache_dir, width, theme,
         )
-        # Preserve scroll position across reflows.
         scroll_y = self.view.verticalScrollBar().value()
         self.view.setHtml(html)
         self.view.verticalScrollBar().setValue(scroll_y)
         self._last_width = width
+        self._last_theme = theme

@@ -57,6 +57,9 @@ if readme.exists():
 assets_readme = ROOT / "assets" / "readme"
 if assets_readme.is_dir():
     datas.append((str(assets_readme), "assets/readme"))
+assets_app = ROOT / "assets" / "app"
+if assets_app.is_dir():
+    datas.append((str(assets_app), "assets/app"))
 
 # Markdown reads its own package metadata at runtime to enumerate built-in
 # extensions. Without this, "tables" / "fenced_code" silently disappear.
@@ -110,5 +113,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,                 # set to a .ico path later if you have one
+    icon=str(ROOT / "assets" / "app" / "icon.ico")
+    if (ROOT / "assets" / "app" / "icon.ico").exists()
+    else None,
 )

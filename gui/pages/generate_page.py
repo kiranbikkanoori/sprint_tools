@@ -10,9 +10,8 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices, QPalette
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QFileDialog,
     QGroupBox,
@@ -28,24 +27,10 @@ from PySide6.QtWidgets import (
 
 from config_parser import SprintConfig
 from gui.settings import AppSettings, output_dir_default
+from gui.theme import app_theme
 from gui.workers.jira_workers import GenerateReportWorker, run_worker
 
 log = logging.getLogger(__name__)
-
-
-def _app_theme() -> str:
-    """Return ``light`` or ``dark`` from the application palette."""
-    app = QApplication.instance()
-    if app is None:
-        return "light"
-    window_color = app.palette().color(QPalette.ColorRole.Window)
-    # Rec. 709 luminance — dark UIs sit well below mid-grey.
-    luminance = (
-        0.2126 * window_color.redF()
-        + 0.7152 * window_color.greenF()
-        + 0.0722 * window_color.blueF()
-    )
-    return "dark" if luminance < 0.45 else "light"
 
 
 def _preview_html_from_export(html_path: Path, theme: str) -> str:
@@ -198,7 +183,7 @@ class GeneratePage(QWidget):
         if "report_html" in self.last_outputs:
             try:
                 html_path = self.last_outputs["report_html"]
-                theme = _app_theme()
+                theme = app_theme()
                 html = _preview_html_from_export(html_path, theme)
                 # Resolve relative chart images against the output directory.
                 self.report_view.document().setBaseUrl(
