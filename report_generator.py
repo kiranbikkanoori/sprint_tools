@@ -874,11 +874,10 @@ def generate_text_report(
 
     # ── Placeholder for remaining metrics ─────────────────────────────────
     ln("---")
-    ln("## Other Metrics")
     ln()
     ln(
-        "> **Under development:** Burndown / remaining work, JIRA hygiene score, "
-        "scope churn, and related sections are not produced in this reporting mode yet."
+        "*Additional metrics (Jira hygiene score, ceremony effectiveness, remaining-work "
+        "burndown line, …) are not calculated in this reporting mode yet.*"
     )
     ln()
 

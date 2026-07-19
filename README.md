@@ -4,14 +4,17 @@
 
 # Sprint Report
 
-Desktop app for sprint leads: connect to Jira, pick a sprint, adjust capacity, and generate a markdown report plus hours chart — previewed inside the app.
+Desktop app for sprint leads: connect to Jira, pick a sprint, adjust capacity, and generate a styled HTML report, portable markdown, and hours chart — previewed inside the app.
 
 **Files produced**
 
 | File | What it is |
 |------|------------|
-| `sprint_report_<sprint>.md` | The full report (all tables below) |
+| `sprint_report_<sprint>.html` | Styled report for sharing / browser (light + dark) |
+| `sprint_report_<sprint>.md` | Portable markdown of the same tables |
 | `sprint_burndown_<sprint>.png` | Stacked daily hours by person |
+
+The Generate preview shows the HTML styling. Open the `.html` file in a browser for Light / Dark / Auto theme controls.
 
 ---
 
@@ -30,7 +33,7 @@ Desktop app for sprint leads: connect to Jira, pick a sprint, adjust capacity, a
 | **1. Settings** | Enter Jira URL + Personal Access Token (or username/password) | Saves credentials encrypted locally |
 | **2. Sprint** | Search a board, pick a sprint, click *Load sprint* | Fetches issues + worklogs in the background |
 | **3. Configure** | Set report date, include/exclude people, leaves, exclusions | Auto-fills assignees; remembers config per sprint |
-| **4. Generate** | Click Generate | Builds report + chart, previews both, opens the output folder |
+| **4. Generate** | Click Generate | Builds HTML + markdown + chart, previews the styled report, opens the output folder |
 
 ### Quick checklist
 

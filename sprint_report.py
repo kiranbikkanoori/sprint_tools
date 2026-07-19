@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config_parser import parse_config
 from utils import effective_issue_type
 from report_generator import build_sprint_work_report, generate_text_report
+from report_html import generate_html_report
 from report_format import generate_report_format
 
 
@@ -138,21 +139,9 @@ def main():
     )
 
     safe_name = config.sprint_name.replace(" ", "_")
+    chart_path: Path | None = None
 
-    # ── Text report ──────────────────────────────────────────────────────
-    if not args.chart_only:
-        report_text = generate_text_report(
-            config, sprint_start, sprint_end, work_report,
-            sprint_goal=sprint_goal,
-            issues=issues,
-            sprint_start_raw=sprint_info.get("start_datetime") or sprint_info.get("start_date"),
-        )
-
-        report_path = output_dir / f"sprint_report_{safe_name}.md"
-        report_path.write_text(report_text, encoding="utf-8")
-        print(f"Text report saved to: {report_path}")
-
-    # ── Burndown chart ───────────────────────────────────────────────────
+    # ── Burndown chart (first so HTML can embed it) ───────────────────────
     if not args.report_only:
         try:
             from burndown_chart import generate_burndown_chart
@@ -175,6 +164,33 @@ def main():
             output_path=chart_path,
         )
         print(f"Burndown chart saved to: {chart_path}")
+
+    # ── Text + HTML report ───────────────────────────────────────────────
+    if not args.chart_only:
+        sprint_start_raw = sprint_info.get("start_datetime") or sprint_info.get("start_date")
+        report_text = generate_text_report(
+            config, sprint_start, sprint_end, work_report,
+            sprint_goal=sprint_goal,
+            issues=issues,
+            sprint_start_raw=sprint_start_raw,
+        )
+
+        report_path = output_dir / f"sprint_report_{safe_name}.md"
+        report_path.write_text(report_text, encoding="utf-8")
+        print(f"Text report saved to: {report_path}")
+
+        html_text = generate_html_report(
+            config, sprint_start, sprint_end, work_report,
+            sprint_goal=sprint_goal,
+            issues=issues,
+            sprint_start_raw=sprint_start_raw,
+            chart_path=chart_path,
+            theme=None,
+            include_theme_toggle=True,
+        )
+        html_path = output_dir / f"sprint_report_{safe_name}.html"
+        html_path.write_text(html_text, encoding="utf-8")
+        print(f"HTML report saved to: {html_path}")
 
     print("Done.")
 

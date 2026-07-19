@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config_parser import SprintConfig
 from utils import effective_issue_type
 from report_generator import build_sprint_work_report, generate_text_report
+from report_html import generate_html_report
 
 
 def generate_outputs(
@@ -28,10 +29,10 @@ def generate_outputs(
     make_chart: bool = True,
 ) -> dict[str, Path]:
     """
-    Generate the markdown report and burndown chart.
+    Generate the markdown report, styled HTML report, and burndown chart.
 
-    Returns a dict with keys ``report`` and/or ``chart`` mapping to the
-    written file paths.
+    Returns a dict with keys ``report``, ``report_html``, and/or ``chart``
+    mapping to the written file paths.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -53,18 +54,9 @@ def generate_outputs(
 
     safe_name = (config.sprint_name or sprint_info.get("name", "sprint")).replace(" ", "_")
     written: dict[str, Path] = {}
+    chart_path: Path | None = None
 
-    if make_report:
-        text = generate_text_report(
-            config, sprint_start, sprint_end, work_report,
-            sprint_goal=sprint_goal,
-            issues=issues,
-            sprint_start_raw=sprint_info.get("start_datetime") or sprint_info.get("start_date"),
-        )
-        path = output_dir / f"sprint_report_{safe_name}.md"
-        path.write_text(text, encoding="utf-8")
-        written["report"] = path
-
+    # Chart first so the HTML report can embed it when both are requested.
     if make_chart:
         from burndown_chart import generate_burndown_chart
 
@@ -79,7 +71,7 @@ def generate_outputs(
         chart_worklogs = {k: worklogs.get(k, []) for k in chart_keys}
         included_names = [m.name for m in config.team_members if m.included]
 
-        path = output_dir / f"sprint_burndown_{safe_name}.png"
+        chart_path = output_dir / f"sprint_burndown_{safe_name}.png"
         generate_burndown_chart(
             sprint_name=config.sprint_name,
             sprint_start=sprint_start,
@@ -87,8 +79,33 @@ def generate_outputs(
             member_names=included_names,
             worklogs=chart_worklogs,
             report_date=report_date,
-            output_path=path,
+            output_path=chart_path,
         )
-        written["chart"] = path
+        written["chart"] = chart_path
+
+    if make_report:
+        sprint_start_raw = sprint_info.get("start_datetime") or sprint_info.get("start_date")
+        text = generate_text_report(
+            config, sprint_start, sprint_end, work_report,
+            sprint_goal=sprint_goal,
+            issues=issues,
+            sprint_start_raw=sprint_start_raw,
+        )
+        md_path = output_dir / f"sprint_report_{safe_name}.md"
+        md_path.write_text(text, encoding="utf-8")
+        written["report"] = md_path
+
+        html = generate_html_report(
+            config, sprint_start, sprint_end, work_report,
+            sprint_goal=sprint_goal,
+            issues=issues,
+            sprint_start_raw=sprint_start_raw,
+            chart_path=chart_path,
+            theme=None,
+            include_theme_toggle=True,
+        )
+        html_path = output_dir / f"sprint_report_{safe_name}.html"
+        html_path.write_text(html, encoding="utf-8")
+        written["report_html"] = html_path
 
     return written

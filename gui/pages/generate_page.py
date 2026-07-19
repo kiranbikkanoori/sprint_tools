@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import markdown as _markdown
-    _HAS_MD = True
-    _MD_IMPORT_ERR = ""
-except Exception as _e:  # pragma: no cover
-    _HAS_MD = False
-    _MD_IMPORT_ERR = repr(_e)
-
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QPixmap, QDesktopServices
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFileDialog,
     QGroupBox,
@@ -26,63 +21,59 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QScrollArea,
-    QTabWidget,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
 
-
-_REPORT_CSS = """
-<style>
-  body { font-family: 'Segoe UI', sans-serif; font-size: 13px; color: #222; }
-  h1 { font-size: 20px; border-bottom: 2px solid #2176FF; padding-bottom: 6px; }
-  h2 { font-size: 16px; color: #2176FF; margin-top: 24px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-  table { border-collapse: collapse; margin: 8px 0 16px 0; }
-  th, td { border: 1px solid #c0c0c0; padding: 4px 8px; vertical-align: top; }
-  th { background: #f0f4ff; text-align: left; font-weight: 600; }
-  td code { background: #f5f5f5; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
-  tr:nth-child(even) td { background: #fafbfc; }
-  blockquote { border-left: 3px solid #2176FF; margin: 8px 0; padding: 4px 12px; background: #f7faff; color: #444; }
-  hr { border: 0; border-top: 1px solid #ddd; margin: 16px 0; }
-  em { color: #888; }
-</style>
-"""
-
-
-def _render_markdown(text: str) -> str:
-    """Render markdown to HTML, preserving inline <br> tags inside table cells."""
-    import logging
-    log = logging.getLogger(__name__)
-    if _HAS_MD:
-        try:
-            body = _markdown.markdown(
-                text,
-                extensions=["tables", "fenced_code", "md_in_html"],
-            )
-            log.info("Rendered report via markdown package (%d bytes)", len(body))
-        except Exception as e:
-            log.exception("markdown rendering failed; falling back to <pre>")
-            from html import escape
-            body = (
-                f"<p style='color:#a00;'>Markdown rendering failed: {escape(str(e))}</p>"
-                f"<pre>{escape(text)}</pre>"
-            )
-    else:
-        from html import escape
-        log.warning("markdown package not available (%s) — using <pre> fallback",
-                    _MD_IMPORT_ERR)
-        body = (
-            "<p style='color:#a00;'>Note: <code>markdown</code> Python package is not "
-            f"bundled in this build ({escape(_MD_IMPORT_ERR)}). Showing raw text.</p>"
-            f"<pre>{escape(text)}</pre>"
-        )
-    return f"<html><head>{_REPORT_CSS}</head><body>{body}</body></html>"
-
 from config_parser import SprintConfig
 from gui.settings import AppSettings, output_dir_default
 from gui.workers.jira_workers import GenerateReportWorker, run_worker
+
+log = logging.getLogger(__name__)
+
+
+def _app_theme() -> str:
+    """Return ``light`` or ``dark`` from the application palette."""
+    app = QApplication.instance()
+    if app is None:
+        return "light"
+    window_color = app.palette().color(QPalette.ColorRole.Window)
+    # Rec. 709 luminance — dark UIs sit well below mid-grey.
+    luminance = (
+        0.2126 * window_color.redF()
+        + 0.7152 * window_color.greenF()
+        + 0.0722 * window_color.blueF()
+    )
+    return "dark" if luminance < 0.45 else "light"
+
+
+def _preview_html_from_export(html_path: Path, theme: str) -> str:
+    """
+    Load exported HTML and re-theme it for QTextBrowser.
+
+    The on-disk file keeps dual-theme CSS for browsers; the preview injects a
+    resolved single-theme stylesheet so Qt's limited CSS engine looks correct.
+    """
+    from report_style import report_css_for_theme
+
+    raw = html_path.read_text(encoding="utf-8")
+    body_m = re.search(r"<body[^>]*>(.*)</body>", raw, flags=re.IGNORECASE | re.DOTALL)
+    body = body_m.group(1) if body_m else raw
+    # Remove theme toggle UI (buttons don't work inside QTextBrowser).
+    body = re.sub(
+        r'<div class="theme-toggle">.*?</div>',
+        "",
+        body,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    body = re.sub(r"<script\b[^>]*>.*?</script>", "", body, flags=re.IGNORECASE | re.DOTALL)
+    css = report_css_for_theme(theme)
+    return (
+        f'<!DOCTYPE html><html lang="en" data-theme="{theme}">'
+        f"<head><meta charset='utf-8'/>{css}</head>"
+        f"<body>{body}</body></html>"
+    )
 
 
 class GeneratePage(QWidget):
@@ -98,7 +89,7 @@ class GeneratePage(QWidget):
         # ── Options ──
         opts = QGroupBox("Output")
         o_lay = QHBoxLayout(opts)
-        self.cb_report = QCheckBox("Markdown report")
+        self.cb_report = QCheckBox("Report (Markdown + HTML)")
         self.cb_chart = QCheckBox("Burndown PNG")
         self.cb_report.setChecked(True)
         self.cb_chart.setChecked(True)
@@ -117,32 +108,27 @@ class GeneratePage(QWidget):
         actions = QHBoxLayout()
         self.generate_btn = QPushButton("Generate")
         self.generate_btn.setDefault(True)
+        self.open_html_btn = QPushButton("Open HTML report")
+        self.open_html_btn.setEnabled(False)
         self.open_folder_btn = QPushButton("Open output folder")
         self.open_folder_btn.setEnabled(False)
         actions.addWidget(self.generate_btn)
         actions.addStretch(1)
+        actions.addWidget(self.open_html_btn)
         actions.addWidget(self.open_folder_btn)
 
         self.generate_btn.clicked.connect(self._generate)
+        self.open_html_btn.clicked.connect(self._open_html_report)
         self.open_folder_btn.clicked.connect(self._open_output_folder)
 
-        # ── Progress + preview ──
+        # ── Progress + preview (chart is embedded at the end of the HTML report) ──
         self.progress_label = QLabel("")
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setVisible(False)
 
-        self.preview_tabs = QTabWidget()
         self.report_view = QTextBrowser()
         self.report_view.setOpenExternalLinks(True)
-        self.preview_tabs.addTab(self.report_view, "Report")
-
-        self.chart_label = QLabel("Chart will appear here once generated.")
-        self.chart_label.setAlignment(Qt.AlignCenter)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self.chart_label)
-        self.preview_tabs.addTab(scroll, "Burndown chart")
 
         layout = QVBoxLayout(self)
         layout.addWidget(title)
@@ -151,7 +137,7 @@ class GeneratePage(QWidget):
         layout.addLayout(actions)
         layout.addWidget(self.progress_label)
         layout.addWidget(self.progress_bar)
-        layout.addWidget(self.preview_tabs, stretch=1)
+        layout.addWidget(self.report_view, stretch=1)
 
     # ── public ──────────────────────────────────────────────────────────
 
@@ -205,30 +191,46 @@ class GeneratePage(QWidget):
 
     def _on_finished(self, written: dict) -> None:
         self._busy("", False)
-        self.last_outputs = written or {}
+        self.last_outputs = {k: Path(v) for k, v in (written or {}).items()}
         self.open_folder_btn.setEnabled(bool(self.last_outputs))
+        self.open_html_btn.setEnabled("report_html" in self.last_outputs)
 
-        if "report" in written:
+        if "report_html" in self.last_outputs:
             try:
-                text = Path(written["report"]).read_text(encoding="utf-8")
-                self.report_view.setHtml(_render_markdown(text))
+                html_path = self.last_outputs["report_html"]
+                theme = _app_theme()
+                html = _preview_html_from_export(html_path, theme)
+                # Resolve relative chart images against the output directory.
+                self.report_view.document().setBaseUrl(
+                    QUrl.fromLocalFile(str(html_path.parent.resolve()) + "/")
+                )
+                self.report_view.setHtml(html)
+            except Exception as e:  # noqa: BLE001
+                log.exception("Failed to preview HTML report")
+                self.report_view.setPlainText(f"(Could not preview HTML report: {e})")
+        elif "report" in self.last_outputs:
+            try:
+                self.report_view.setPlainText(
+                    self.last_outputs["report"].read_text(encoding="utf-8")
+                )
             except Exception as e:  # noqa: BLE001
                 self.report_view.setPlainText(f"(Could not read report: {e})")
 
-        if "chart" in written:
-            pix = QPixmap(str(written["chart"]))
-            if not pix.isNull():
-                self.chart_label.setPixmap(pix)
-                self.chart_label.setText("")
-            else:
-                self.chart_label.setText("(Chart could not be loaded)")
-
         msg = "Done."
-        if "report" in written:
-            msg += f"\n\nReport: {written['report']}"
-        if "chart" in written:
-            msg += f"\nChart : {written['chart']}"
+        if "report_html" in self.last_outputs:
+            msg += f"\n\nHTML report: {self.last_outputs['report_html']}"
+        if "report" in self.last_outputs:
+            msg += f"\nMarkdown : {self.last_outputs['report']}"
+        if "chart" in self.last_outputs:
+            msg += f"\nChart    : {self.last_outputs['chart']}"
         QMessageBox.information(self, "Generated", msg)
+
+    def _open_html_report(self) -> None:
+        path = self.last_outputs.get("report_html")
+        if not path or not path.is_file():
+            QMessageBox.information(self, "No HTML report", "Generate a report first.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
     def _open_output_folder(self) -> None:
         out = self.settings.output_dir or str(output_dir_default())

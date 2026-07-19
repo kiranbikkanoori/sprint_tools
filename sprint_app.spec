@@ -22,6 +22,8 @@ block_cipher = None
 hidden_imports = [
     "config_parser",
     "report_generator",
+    "report_html",
+    "report_style",
     "report_format",
     "burndown_chart",
     "fetch_sprint_data",
