@@ -4,173 +4,177 @@
 
 # Sprint Report
 
-A PySide6 desktop app for sprint leads: connect to Jira, pick a sprint, adjust team capacity, and generate a markdown report plus burndown chart — without hand-editing config files.
+Desktop app for sprint leads: connect to Jira, pick a sprint, adjust capacity, and generate a markdown report plus hours chart — previewed inside the app.
 
-**Outputs**
+**Files produced**
 
-- `sprint_report_<sprint>.md` — logged hours, KPIs, gaps, velocity, ticket snapshot  
-- `sprint_burndown_<sprint>.png` — stacked daily hours by person  
+| File | What it is |
+|------|------------|
+| `sprint_report_<sprint>.md` | The full report (all tables below) |
+| `sprint_burndown_<sprint>.png` | Stacked daily hours by person |
 
 ---
-
-## Proof
-
-Real chart from sprint `Wi-Fi_LMAC_2026_11`:
 
 <p align="center">
-  <img src="./assets/readme/proof-burndown.png" width="100%" alt="Stacked burndown chart of hours logged per person for Wi-Fi_LMAC_2026_11">
+  <img src="./assets/readme/section-howto.svg" width="100%" alt="How to use the Sprint Report app">
 </p>
-
-The Generate step previews both the report and this chart inline before you open the output folder.
-
----
 
 <p align="center">
   <img src="./assets/readme/workflow.svg" width="100%" alt="Four-step workflow: Settings, Sprint, Configure, Generate">
 </p>
 
-### What each step does
+### Steps
 
 | Step | You do | App does |
 |------|--------|----------|
-| **1. Settings** | Enter Jira base URL + Personal Access Token (or username/password) | Saves credentials encrypted under your OS app-data folder; falls back to a `.env` next to the executable |
-| **2. Sprint** | Search boards, pick a board and sprint, click *Load sprint* | Fetches issues + worklogs in the background |
-| **3. Configure** | Tune weeks, meeting reserve, team include flags, leaves, exclusions, extras | Auto-populates assignees from the sprint; auto-saves per-sprint JSON; can import/export `sprint_report_config.md` |
-| **4. Generate** | Click generate | Builds the report + burndown chart, previews both inline, opens the output folder |
+| **1. Settings** | Enter Jira URL + Personal Access Token (or username/password) | Saves credentials encrypted locally |
+| **2. Sprint** | Search a board, pick a sprint, click *Load sprint* | Fetches issues + worklogs in the background |
+| **3. Configure** | Set report date, include/exclude people, leaves, exclusions | Auto-fills assignees; remembers config per sprint |
+| **4. Generate** | Click Generate | Builds report + chart, previews both, opens the output folder |
+
+### Quick checklist
+
+1. **Settings** → Jira URL + PAT → Save  
+2. **Sprint** → pick board + sprint → *Load sprint*  
+3. **Configure** → set **report date**, uncheck people who should not appear, add leaves/exclusions  
+4. **Generate** → preview → open output folder  
+
+### Configure tips (important)
+
+**Report date** — the report and chart only include worklogs **up to and including** this date. Use today for a mid-sprint snapshot, or the sprint end date for a final report. A wrong date truncates hours, KPIs, and the chart.
+
+**Planned leaves** — the person name must match a **Team members** row exactly (same spelling/spacing). Prefer the dropdown. If the name does not match, that leave is ignored and capacity stays wrong.
+
+**Include checkbox** — only included people appear in hours tables, completion, and the chart. Worklogs are matched by **Jira worklog author** name.
+
+**Excluded tickets** — dropped from KPIs, completion, and the tickets table (umbrellas/duplicates).
 
 ---
 
 <p align="center">
-  <img src="./assets/readme/section-get-started.svg" width="100%" alt="Get started — install, run, and build the desktop app">
+  <img src="./assets/readme/section-outcomes.svg" width="100%" alt="What you get from Sprint Report">
 </p>
 
-### Requirements
+Below is every table (and the chart) the tool generates, in report order, with a small layout sketch of each.
 
-- Python **3.10+**
-- Jira access (Personal Access Token recommended)
-- Dependencies from `requirements.txt` and `requirements-gui.txt`
+### 1. Logged Hours by Person — Stories
 
-### Run from source
+**Purpose:** See who logged time on **Story / User Story / Epic** work each weekday.
 
-```bash
-cd sprint_tools
-pip install -r requirements.txt
-pip install -r requirements-gui.txt
-python -m gui.app
-```
+**Columns:** Person → one column per weekday through the report date → **Total (stories)**  
+**Rows:** Each included person, then a **Team total** row.  
+**Cells:** Daily hours; when per-ticket detail is on, issue keys appear under the day total.  
+**Note:** Sub-task worklogs are not counted here.
 
-### Build a standalone executable
+<p align="center">
+  <img src="./assets/readme/table-hours.svg" width="100%" alt="Diagram of the logged hours table with people, weekdays, and team total">
+</p>
 
-```powershell
-pip install -r requirements.txt
-pip install -r requirements-gui.txt
-python build_exe.py
-```
+### 2. Logged Hours by Person — Tasks (non-story)
 
-Output lands in `dist/` as `SprintReport.exe` (Windows) or `SprintReport` (macOS/Linux). No Python install needed on the target machine.
+**Purpose:** Same layout as Stories, but for **Task / Bug / Spike** and other non-story, non-sub-task types.
 
-> Run `build_exe.py` on the OS you want to target — PyInstaller does not cross-compile.
+**Columns / rows:** Same shape as the Stories table; total column is **Total (tasks)**.  
+**Use it for:** Separating story delivery time from other ticket types.
 
-### First-run checklist
+<p align="center">
+  <img src="./assets/readme/table-hours.svg" width="100%" alt="Tasks hours table uses the same layout as the Stories table">
+</p>
 
-1. Open the app → **Settings** → set Jira URL + PAT → Save  
-2. **Sprint** → search your board → pick the sprint → *Load sprint*  
-3. **Configure** → set **report date**, uncheck managers, add leaves / exclusions if needed  
-4. **Generate** → preview report + chart → open the output folder  
+### 3. Sprint KPI Summary
 
-Use the **Help** sidebar item anytime for this guide inside the app (also bundled in the `.exe`).
+**Purpose:** One sprint-level scorecard after the hours tables.
 
----
+**Columns:** KPI | Value | Notes  
 
-## Where files are stored
+| KPI row | Meaning |
+|---------|---------|
+| Sprint completion rate | Done Stories+Tasks / accepted Stories+Tasks |
+| Sprint velocity | Story points delivered / effective person-days |
+| Scope stability & backlog churn | Count of Stories+Tasks added after sprint start |
+| Number of tickets / completed / differed | Committed, done, and remaining counts |
+| Participation, ceremony, hygiene, … | Shown as `N/A` until implemented |
 
-| Path | Purpose |
-|------|---------|
-| `%APPDATA%\SprintReport\settings.json` | Jira creds (token encrypted), prefs |
-| `%APPDATA%\SprintReport\configs\<sprint>.json` | Per-sprint UI config |
-| `%APPDATA%\SprintReport\output\sprint_report_<sprint>.md` | Generated report (default) |
-| `%APPDATA%\SprintReport\output\sprint_burndown_<sprint>.png` | Generated chart (default) |
-| `%APPDATA%\SprintReport\logs\` | Session / crash logs |
+<p align="center">
+  <img src="./assets/readme/table-kpi.svg" width="100%" alt="Diagram of the Sprint KPI Summary table">
+</p>
 
-On Linux use `~/.config/SprintReport/…`. On macOS use `~/Library/Application Support/SprintReport/…`.
+### 4. Tickets Added After Sprint Start
 
----
+**Purpose:** Drill into backlog churn. **Only appears when churn is non-zero.**
 
-## What the report contains
+**Columns:** Key | Summary | Assignee | Status | Sprint Started (IST) | Added To Sprint (IST)
 
-1. **Logged Hours by Person** — stories and tasks, weekday tables  
-2. **Sprint KPI Summary** — completion, velocity, churn, ticket counts  
-3. **Daily Log Gaps** — days with no logged work  
-4. **Sub-task Validation** — remaining work / worklogs on sub-tasks  
-5. **Sprint Completion & Velocity** — per-person breakdown  
-6. **Sprint Tickets** — status and remaining work  
-7. **Burndown Chart** — stacked daily logged hours  
+<p align="center">
+  <img src="./assets/readme/table-churn.svg" width="100%" alt="Diagram of the backlog churn ticket list">
+</p>
 
----
+### 5. Validation: Sub-tasks With Remaining Work
 
-## Configure screen (what you can edit)
+**Purpose:** Hygiene check — child tickets that still have remaining estimate.
 
-| Area | Purpose |
-|------|---------|
-| Sprint name / duration / report date | Identity and worklog cut-off (see below) |
-| Meeting / ceremony reserve | Days deducted from each person's capacity |
-| Team members | Include/exclude people (assignees pre-filled) |
-| Planned leaves | Leave days per person (name must match team list) |
-| Other exclusions | Non-dev hours (support, mentoring, …) |
-| Extra tickets | Tickets outside the sprint to still track |
-| Excluded tickets | In-sprint tickets to ignore (umbrellas, duplicates) |
-| Report options | Per-ticket worklog detail on/off |
+**Columns:** Ticket | Assignee | Parent | Remaining | Summary  
+**Good result:** Empty (“No sub-tasks with non-zero remaining estimate”).
 
-Configs reload automatically the next time you open the same sprint.
+### 6. Validation: Work Logged on Sub-tasks
 
-### Report date (important)
+**Purpose:** Hygiene check — hours logged on sub-tasks in the report window (team should usually log on stories/tasks).
 
-The report and burndown only include worklogs **up to and including the report date**. Anything logged after that date is ignored.
+**Columns:** Ticket | Assignee | Parent | Total (h) | By author | Summary  
+**Good result:** Empty.
 
-- Set the date deliberately before you generate (for example today for a mid-sprint snapshot, or the sprint end date for a final report).
-- If the date is wrong, hours, gaps, KPIs, and the chart will all be truncated or incomplete.
+<p align="center">
+  <img src="./assets/readme/table-validation.svg" width="100%" alt="Diagram of the sub-task validation tables">
+</p>
 
-### Planned leaves (name matching)
+### 7. Sprint Completion & Velocity
 
-Leave rows are matched to people by **name**. The name must match a row in **Team members** exactly (same spelling and spacing as shown in that list).
+**Purpose:** End-of-sprint delivery quality and throughput.
 
-- Prefer picking the name from the dropdown when the UI offers one.
-- If the name does not match, that leave is **not applied** — capacity stays full for that person and the report will look wrong.
+**Team table columns:** Metric | Value | Target — tickets/SP committed & done, completion %, effective person-days, velocity.  
+**Per-person table columns:** Person | Tickets done/committed | Tickets % | SP delivered/committed | SP % | SP / person-day  
 
----
+A ticket counts as done when status category is Done/Complete **or** status is Resolved.  
+Effective person-days = sprint weeks × 5 − meeting reserve − planned leaves (for included people).
 
-## App layout
+<p align="center">
+  <img src="./assets/readme/table-completion.svg" width="100%" alt="Diagram of team and per-person completion and velocity tables">
+</p>
 
-```
-gui/
-├── app.py                 # Entry: python -m gui.app
-├── main_window.py         # Help + four-step navigation
-├── settings.py            # Encrypted creds + app-data paths
-├── pages/
-│   ├── help_page.py       # In-app README
-│   ├── settings_page.py
-│   ├── sprint_select_page.py
-│   ├── config_page.py
-│   └── generate_page.py
-└── workers/               # Background Jira fetch
-build_exe.py               # → dist/SprintReport*
-```
+### 8. Sprint Tickets — Status & Remaining Work
 
----
+**Purpose:** Leftover and hygiene view of every Story/Task in the sprint (excluded tickets omitted).
 
-## Troubleshooting
+**Columns:** Key | Summary | Type | Assignee | Status | Estimate (h) | Remaining (h) | SP  
+**Sort:** Unfinished first, then status, then key.  
+**⚠ marker:** Ticket looks done/Resolved but Remaining is still greater than zero.
 
-| Issue | Fix |
-|-------|-----|
-| App asks for credentials every time | Save on the Settings page; confirm write access to the app-data folder |
-| Sprint list empty / load fails | Check Jira URL + PAT on Settings; confirm board search text matches |
-| Empty burndown | Confirm included teammates have worklogs in the sprint date range |
-| `ModuleNotFoundError: PySide6` | `pip install -r requirements-gui.txt` |
-| Exe build fails on another OS | Build on the target OS; PyInstaller is not cross-platform |
-| Unexpected crash | Check `%APPDATA%\SprintReport\logs\` (or `~/.config/SprintReport/logs/` on Linux) |
+<p align="center">
+  <img src="./assets/readme/table-tickets.svg" width="100%" alt="Diagram of the sprint tickets status and remaining work table">
+</p>
+
+### 9. Other Metrics
+
+Placeholder only — not calculated yet (called out in the report so the gap is visible).
+
+### 10. Burndown chart (PNG)
+
+**Purpose:** Visual of hours logged per working day, stacked by included person (Story + Task worklogs through the report date).
+
+**Not yet:** A remaining-work burndown line (subtitle in the chart notes this).
+
+<p align="center">
+  <img src="./assets/readme/proof-burndown.png" width="100%" alt="Example stacked hours chart for Wi-Fi_LMAC_2026_11">
+</p>
 
 ---
 
-## License / internal use
+### Who and what is included
 
-Internal tooling for sprint reporting against Jira. Keep PATs out of git — the app encrypts tokens in local settings (and can fall back to a local `.env` next to the executable).
+| Rule | Effect |
+|------|--------|
+| Include = Yes | Person appears in hours, completion, and chart |
+| Worklog author name | Must match the team member name used in the report |
+| Excluded tickets | Omitted from KPIs, completion, and ticket list |
+| Report date | Caps weekday columns, validation window, and chart |
+| Sub-tasks | Not in hours/completion/ticket tables; only in validation sections |
