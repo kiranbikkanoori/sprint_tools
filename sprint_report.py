@@ -184,7 +184,7 @@ def main():
             sprint_goal=sprint_goal,
             issues=issues,
             sprint_start_raw=sprint_start_raw,
-            chart_path=chart_path,
+            chart_path=None,
             theme=None,
             include_theme_toggle=True,
         )

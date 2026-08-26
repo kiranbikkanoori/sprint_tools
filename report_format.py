@@ -34,17 +34,19 @@ python sprint_report.py --generate-format -o ./output
 
 ---
 
-## Logged Hours by Person — Stories / Tasks (non-story)
+## Stories / Tasks — logged hours & remaining
 
 Two separate markdown tables with the same date columns:
 
-1. **Stories** — Jira issue types **Story**, **User Story**, and **Epic** (case-insensitive), with no parent link (and not classified as Sub-task).
-2. **Tasks (non-story)** — all other **non–sub-task** issue types (e.g. **Task**, **Bug**, **Spike**): log here, not on sub-tasks.
+1. **Stories — logged hours & remaining** — Jira issue types **Story**, **User Story**, and **Epic** (case-insensitive), with no parent link (and not classified as Sub-task).
+2. **Tasks (non-story) — logged hours & remaining** — all other **non–sub-task** issue types (e.g. **Task**, **Bug**, **Spike**).
 
-- **Included people:** Team members with **Include in Report = Yes** (name must match Jira worklog author).
+- **Included people:** Team members with **Include in Report = Yes** (name must match Jira worklog author for logged hours).
 - **Sub-task** worklogs do not appear in these tables (they appear under validation instead).
-- **Dates:** Each table has one column per **weekday** from sprint start through `min(sprint_end, report_date)` (when `report_date` is set), plus a **total** column.
-- **Team total row:** Last row sums hours **across all included people** for each day and for the row total.
+- **Dates:** Each table has one column per **weekday** from sprint start through `min(sprint_end, report_date)` (when `report_date` is set).
+- **Logged (h):** Total worklog hours in that bucket for the person.
+- **Remaining (h):** Sum of that assignee’s Story or Task **remaining estimates** in Jira (live; not original estimate). At sprint start this is planned load; mid-sprint it is leftover work.
+- **Team total row:** Last row sums logged and remaining across included people.
 
 **Mid-sprint:** If `report_date` in config is empty, the cut-off is **today**, so weekday columns and worklog filtering stop at `min(sprint_end, today)`.
 

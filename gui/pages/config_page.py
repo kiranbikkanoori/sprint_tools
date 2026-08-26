@@ -233,6 +233,15 @@ class ConfigPage(QWidget):
             if name not in existing_names:
                 cfg.team_members.append(TeamMember(name=name, role="Developer", included=True))
 
+        # Keep people who have no tickets this sprint (e.g. full leave) via the
+        # board roster from the last saved config for this board.
+        board_id = int(getattr(self.settings, "last_board_id", 0) or 0)
+        roster = config_io.load_board_roster(configs_dir(), board_id)
+        if not roster:
+            roster = config_io.load_recent_team_fallback(configs_dir())
+        if roster:
+            cfg.team_members = config_io.merge_team_members(cfg.team_members, roster)
+
         self.set_config(cfg)
 
         # Store the raw sprint dict for use in subtitle/display
@@ -342,7 +351,16 @@ class ConfigPage(QWidget):
             return
         path = configs_dir() / f"{cfg.sprint_name.replace(' ', '_')}.json"
         config_io.save_json(cfg, path)
+        board_id = int(getattr(self.settings, "last_board_id", 0) or 0)
+        config_io.save_board_roster(configs_dir(), board_id, cfg.team_members)
         QMessageBox.information(self, "Saved", f"Configuration saved to:\n{path}")
+
+    def _persist_board_roster(self, cfg: SprintConfig | None = None) -> None:
+        """Update the board roster so future sprints keep people with no tickets."""
+        cfg = cfg or self.gather_config()
+        board_id = int(getattr(self.settings, "last_board_id", 0) or 0)
+        if board_id and cfg.team_members:
+            config_io.save_board_roster(configs_dir(), board_id, cfg.team_members)
 
     def _import_md(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -382,9 +400,10 @@ class ConfigPage(QWidget):
             QMessageBox.warning(self, "No sprint data",
                                 "Load a sprint from the Sprint tab before generating.")
             return
-        # Auto-save
+        # Auto-save sprint config + board roster (keeps leave-only people next sprint)
         try:
             config_io.save_json(cfg, configs_dir() / f"{cfg.sprint_name.replace(' ', '_')}.json")
+            self._persist_board_roster(cfg)
         except Exception:  # noqa: BLE001
             pass
         self.config = cfg

@@ -565,6 +565,35 @@ def build_backlog_churn_rows(
     return rows
 
 
+def _remaining_hours_by_assignee(
+    config: SprintConfig,
+    issues: list[dict],
+    *,
+    bucket: str,
+) -> dict[str, float]:
+    """
+    Sum current Jira remaining estimates by assignee for Stories or Tasks.
+
+    ``bucket`` is ``\"story\"`` or ``\"task\"`` (same meaning as the hours tables).
+    Excluded tickets and sub-tasks are skipped. Missing/zero remaining counts as 0.
+    """
+    want = "Story" if bucket == "story" else "Task"
+    excluded = set(config.excluded_tickets)
+    out: dict[str, float] = defaultdict(float)
+    for issue in issues:
+        if issue.get("key") in excluded:
+            continue
+        if effective_issue_type(issue) != want:
+            continue
+        assignee = (issue.get("assignee") or "").strip()
+        if not assignee or assignee == "Unassigned":
+            continue
+        rem = _issue_remaining_hours(issue)
+        if rem > 0:
+            out[assignee] += rem
+    return out
+
+
 def _format_day_cell(
     total_h: float,
     ticket_hours: dict[str, float],
@@ -636,12 +665,22 @@ def generate_text_report(
         "> **Worklog source:** By **worklog author**, for team members with **Include in Report = Yes**. "
         f"Columns are **weekdays** in **[{sprint_start.isoformat()}, {report_cap.isoformat()}]** "
         f"(inclusive). {report_asof_note} "
-        "**Stories** vs **tasks** (non-story issue types) are in **two tables** below; each ends with a **team total** row. "
-        "Each person/day cell lists **issue keys** (e.g. RSCDEV-1234) and hours under the daily total."
+        "**Stories** and **non-story tasks** are in **two tables** below. "
+        "**Logged** hours come from worklogs; **Remaining (h)** is the sum of each person's "
+        "assigned Story/Task **remaining estimates** in Jira (not original estimate). "
+        "Each day cell lists **issue keys** and hours under the daily total."
     )
     ln()
 
-    def _emit_hours_table(title: str, bucket: str, total_label: str) -> None:
+    rem_story = _remaining_hours_by_assignee(config, issues or [], bucket="story")
+    rem_task = _remaining_hours_by_assignee(config, issues or [], bucket="task")
+
+    def _emit_hours_table(
+        title: str,
+        bucket: str,
+        logged_label: str,
+        remaining_by_name: dict[str, float],
+    ) -> None:
         ln("---")
         ln(title)
         ln()
@@ -654,12 +693,13 @@ def generate_text_report(
         for d in display_dates:
             hdr += f" {d.strftime('%b %d')} (h) |"
             sep += "--------:|"
-        hdr += f" **{total_label}** |"
-        sep += "--------:|"
+        hdr += f" **{logged_label}** | **Remaining (h)** |"
+        sep += "--------:|--------:|"
         ln(hdr)
         ln(sep)
         col_totals = [0.0] * len(display_dates)
-        team_sum = 0.0
+        team_logged = 0.0
+        team_remaining = 0.0
         tdetails = work_report.daily_ticket_hours
         for name in work_report.included_names:
             row = f"| {name} |"
@@ -673,25 +713,29 @@ def generate_text_report(
                 tickets_for_cell = tdetails.get(name, {}).get(d, {}).get(bucket, {})
                 cell_html = _format_day_cell(h, tickets_for_cell)
                 row += f" {cell_html} |"
-            team_sum += person_tot
-            row += f" **{person_tot:.1f}** |"
+            rem_h = float(remaining_by_name.get(name, 0.0))
+            team_logged += person_tot
+            team_remaining += rem_h
+            row += f" **{person_tot:.1f}** | **{rem_h:.1f}** |"
             ln(row)
         total_row = "| **Team total** |"
         for j in range(len(display_dates)):
             total_row += f" **{col_totals[j]:.1f}** |"
-        total_row += f" **{team_sum:.1f}** |"
+        total_row += f" **{team_logged:.1f}** | **{team_remaining:.1f}** |"
         ln(total_row)
         ln()
 
     _emit_hours_table(
-        "## Logged Hours by Person — Stories",
+        "## Stories — logged hours & remaining",
         "story",
-        "Total (stories)",
+        "Logged (h)",
+        rem_story,
     )
     _emit_hours_table(
-        "## Logged Hours by Person — Tasks (non-story)",
+        "## Tasks (non-story) — logged hours & remaining",
         "task",
-        "Total (tasks)",
+        "Logged (h)",
+        rem_task,
     )
 
     team_completion: TeamCompletion | None = None

@@ -69,17 +69,14 @@ class GeneratePage(QWidget):
         self.payload: dict = {}
         self.last_outputs: dict[str, Path] = {}
 
-        title = QLabel("<h2>Generate report &amp; chart</h2>")
+        title = QLabel("<h2>Generate report</h2>")
 
         # ── Options ──
         opts = QGroupBox("Output")
         o_lay = QHBoxLayout(opts)
         self.cb_report = QCheckBox("Report (Markdown + HTML)")
-        self.cb_chart = QCheckBox("Burndown PNG")
         self.cb_report.setChecked(True)
-        self.cb_chart.setChecked(True)
         o_lay.addWidget(self.cb_report)
-        o_lay.addWidget(self.cb_chart)
         o_lay.addStretch(1)
 
         self.output_label = QLabel(f"Output folder: {settings.output_dir or output_dir_default()}")
@@ -106,7 +103,7 @@ class GeneratePage(QWidget):
         self.open_html_btn.clicked.connect(self._open_html_report)
         self.open_folder_btn.clicked.connect(self._open_output_folder)
 
-        # ── Progress + preview (chart is embedded at the end of the HTML report) ──
+        # ── Progress + preview ──
         self.progress_label = QLabel("")
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
@@ -154,7 +151,7 @@ class GeneratePage(QWidget):
         worker = GenerateReportWorker(
             self.config, self.payload, out_dir,
             make_report=self.cb_report.isChecked(),
-            make_chart=self.cb_chart.isChecked(),
+            make_chart=False,
         )
 
         def _progress(msg, cur, total):

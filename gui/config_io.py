@@ -105,6 +105,104 @@ def load_json(path: Path) -> SprintConfig:
     return dict_to_config(data)
 
 
+# ── Board roster (survives sprints with no tickets for a person) ───────────
+
+def board_roster_path(configs_root: Path, board_id: int) -> Path:
+    return Path(configs_root) / f"board_{int(board_id)}_roster.json"
+
+
+def load_board_roster(configs_root: Path, board_id: int) -> list[TeamMember]:
+    """Return the last saved team roster for this board (may be empty)."""
+    if not board_id:
+        return []
+    path = board_roster_path(configs_root, board_id)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    members: list[TeamMember] = []
+    for m in data.get("team_members") or []:
+        name = (m.get("name") or "").strip()
+        if not name:
+            continue
+        members.append(
+            TeamMember(
+                name=name,
+                role=(m.get("role") or "").strip() or "Developer",
+                included=bool(m.get("included", True)),
+            )
+        )
+    return members
+
+
+def save_board_roster(configs_root: Path, board_id: int, members: list[TeamMember]) -> None:
+    """Persist Include-aware team list for the board (used on next sprint load)."""
+    if not board_id:
+        return
+    path = board_roster_path(configs_root, board_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "board_id": int(board_id),
+        "team_members": [
+            {
+                "name": m.name.strip(),
+                "role": (m.role or "").strip() or "Developer",
+                "included": bool(m.included),
+            }
+            for m in members
+            if m.name.strip()
+        ],
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def load_recent_team_fallback(configs_root: Path) -> list[TeamMember]:
+    """
+    When no board roster exists yet, reuse team members from the most recently
+    saved sprint config (helps first load after upgrade / new board).
+    """
+    root = Path(configs_root)
+    if not root.is_dir():
+        return []
+    candidates = sorted(
+        (p for p in root.glob("*.json") if not p.name.startswith("board_")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates[:8]:
+        try:
+            cfg = load_json(path)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            continue
+        if cfg.team_members:
+            return list(cfg.team_members)
+    return []
+
+
+def merge_team_members(*groups: list[TeamMember]) -> list[TeamMember]:
+    """
+    Merge team lists in priority order: earlier groups win on name collision
+    for role/included; later groups only add missing names.
+    """
+    by_name: dict[str, TeamMember] = {}
+    order: list[str] = []
+    for group in groups:
+        for m in group:
+            name = (m.name or "").strip()
+            if not name:
+                continue
+            if name not in by_name:
+                by_name[name] = TeamMember(
+                    name=name,
+                    role=(m.role or "").strip() or "Developer",
+                    included=bool(m.included),
+                )
+                order.append(name)
+    return [by_name[n] for n in order]
+
+
 # ── Markdown export (subset of fields the parser knows about) ──────────────
 
 _MD_HEADER = """# Sprint Report Configuration

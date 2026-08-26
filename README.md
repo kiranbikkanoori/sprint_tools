@@ -4,7 +4,7 @@
 
 # Sprint Report
 
-Desktop app for sprint leads: connect to Jira, pick a sprint, adjust capacity, and generate a styled HTML report, portable markdown, and hours chart — previewed inside the app.
+Desktop app for sprint leads: connect to Jira, pick a sprint, adjust capacity, and generate a styled HTML report and portable markdown — previewed inside the app.
 
 **Files produced**
 
@@ -12,7 +12,6 @@ Desktop app for sprint leads: connect to Jira, pick a sprint, adjust capacity, a
 |------|------------|
 | `sprint_report_<sprint>.html` | Styled report for sharing / browser (light + dark) |
 | `sprint_report_<sprint>.md` | Portable markdown of the same tables |
-| `sprint_burndown_<sprint>.png` | Stacked daily hours by person |
 
 The Generate preview shows the HTML styling. Open the `.html` file in a browser for Light / Dark / Auto theme controls.
 
@@ -33,7 +32,7 @@ The Generate preview shows the HTML styling. Open the `.html` file in a browser 
 | **1. Settings** | Enter Jira URL + Personal Access Token (or username/password) | Saves credentials encrypted locally |
 | **2. Sprint** | Search a board, pick a sprint, click *Load sprint* | Fetches issues + worklogs in the background |
 | **3. Configure** | Set report date, include/exclude people, leaves, exclusions | Auto-fills assignees; remembers config per sprint |
-| **4. Generate** | Click Generate | Builds HTML + markdown + chart, previews the styled report, opens the output folder |
+| **4. Generate** | Click Generate | Builds HTML + markdown, previews the styled report, opens the output folder |
 
 ### Quick checklist
 
@@ -44,11 +43,13 @@ The Generate preview shows the HTML styling. Open the `.html` file in a browser 
 
 ### Configure tips (important)
 
-**Report date** — the report and chart only include worklogs **up to and including** this date. Use today for a mid-sprint snapshot, or the sprint end date for a final report. A wrong date truncates hours, KPIs, and the chart.
+**Report date** — the report only includes worklogs **up to and including** this date. Use today for a mid-sprint snapshot, or the sprint end date for a final report. A wrong date truncates hours and KPIs.
 
 **Planned leaves** — the person name must match a **Team members** row exactly (same spelling/spacing). Prefer the dropdown. If the name does not match, that leave is ignored and capacity stays wrong.
 
 **Include checkbox** — only included people appear in hours tables, completion, and the chart. Worklogs are matched by **Jira worklog author** name.
+
+**Team roster** — the Configure team list is saved per board. People on leave with **no tickets** still appear on the next sprint load (they are no longer dropped just because Jira has no assignee for them). Add them once and Save / Generate so the roster updates.
 
 **Excluded tickets** — dropped from KPIs, completion, and the tickets table (umbrellas/duplicates).
 
@@ -58,26 +59,27 @@ The Generate preview shows the HTML styling. Open the `.html` file in a browser 
   <img src="./assets/readme/section-outcomes.svg" width="100%" alt="What you get from Sprint Report">
 </p>
 
-Below is every table (and the chart) the tool generates, in report order, with a small layout sketch of each.
+Below is every table the tool generates, in report order, with a small layout sketch of each.
 
-### 1. Logged Hours by Person — Stories
+### 1. Stories — logged hours & remaining
 
-**Purpose:** See who logged time on **Story / User Story / Epic** work each weekday.
+**Purpose:** Daily hours logged on **Story / User Story / Epic** work, plus remaining story load per person.
 
-**Columns:** Person → one column per weekday through the report date → **Total (stories)**  
+**Columns:** Person → weekday columns → **Logged (h)** → **Remaining (h)**  
 **Rows:** Each included person, then a **Team total** row.  
-**Cells:** Daily hours; when per-ticket detail is on, issue keys appear under the day total.  
+**Logged:** Worklogs on Story issues (by author).  
+**Remaining:** Sum of that assignee’s Story **remaining estimates** in Jira (not original estimate).  
 **Note:** Sub-task worklogs are not counted here.
 
 <p align="center">
   <img src="./assets/readme/table-hours.svg" width="100%" alt="Diagram of the logged hours table with people, weekdays, and team total">
 </p>
 
-### 2. Logged Hours by Person — Tasks (non-story)
+### 2. Tasks (non-story) — logged hours & remaining
 
-**Purpose:** Same layout as Stories, but for **Task / Bug / Spike** and other non-story, non-sub-task types.
+**Purpose:** Same layout for **Task / Bug / Spike** and other non-story, non-sub-task types.
 
-**Columns / rows:** Same shape as the Stories table; total column is **Total (tasks)**.  
+**Columns / rows:** Same shape; Remaining is remaining estimates on those tickets.  
 **Use it for:** Separating story delivery time from other ticket types.
 
 <p align="center">
@@ -160,24 +162,14 @@ Effective person-days = sprint weeks × 5 − meeting reserve − planned leaves
 
 Placeholder only — not calculated yet (called out in the report so the gap is visible).
 
-### 10. Burndown chart (PNG)
-
-**Purpose:** Visual of hours logged per working day, stacked by included person (Story + Task worklogs through the report date).
-
-**Not yet:** A remaining-work burndown line (subtitle in the chart notes this).
-
-<p align="center">
-  <img src="./assets/readme/proof-burndown.png" width="100%" alt="Example stacked hours chart for Wi-Fi_LMAC_2026_11">
-</p>
-
 ---
 
 ### Who and what is included
 
 | Rule | Effect |
 |------|--------|
-| Include = Yes | Person appears in hours, completion, and chart |
+| Include = Yes | Person appears in hours and completion tables |
 | Worklog author name | Must match the team member name used in the report |
 | Excluded tickets | Omitted from KPIs, completion, and ticket list |
-| Report date | Caps weekday columns, validation window, and chart |
+| Report date | Caps weekday columns and the validation window |
 | Sub-tasks | Not in hours/completion/ticket tables; only in validation sections |

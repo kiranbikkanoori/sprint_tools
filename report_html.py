@@ -13,6 +13,7 @@ from report_generator import (
     _fmt_d,
     _fmt_sp,
     _log_window_end,
+    _remaining_hours_by_assignee,
     build_backlog_churn_rows,
     build_completion_velocity,
     build_effective_days_by_person,
@@ -49,7 +50,8 @@ def _hours_table_html(
     work_report: SprintWorkReport,
     display_dates: list[date],
     bucket: str,
-    total_label: str,
+    logged_label: str,
+    remaining_by_name: dict[str, float],
 ) -> str:
     if not display_dates:
         return '<p class="empty">No working days in range.</p>'
@@ -57,10 +59,14 @@ def _hours_table_html(
     parts: list[str] = ['<table><thead><tr><th>Person</th>']
     for d in display_dates:
         parts.append(f'<th class="num">{escape(d.strftime("%b %d"))} (h)</th>')
-    parts.append(f'<th class="num">{escape(total_label)}</th></tr></thead><tbody>')
+    parts.append(
+        f'<th class="num">{escape(logged_label)}</th>'
+        f'<th class="num">Remaining (h)</th></tr></thead><tbody>'
+    )
 
     col_totals = [0.0] * len(display_dates)
-    team_sum = 0.0
+    team_logged = 0.0
+    team_remaining = 0.0
     tdetails = work_report.daily_ticket_hours
     for name in work_report.included_names:
         parts.append(f"<tr><td>{escape(name)}</td>")
@@ -73,13 +79,21 @@ def _hours_table_html(
             person_tot += h
             tickets_for_cell = tdetails.get(name, {}).get(d, {}).get(bucket, {})
             parts.append(f'<td class="num">{_day_cell_html(h, tickets_for_cell)}</td>')
-        team_sum += person_tot
-        parts.append(f'<td class="num"><strong>{person_tot:.1f}</strong></td></tr>')
+        rem_h = float(remaining_by_name.get(name, 0.0))
+        team_logged += person_tot
+        team_remaining += rem_h
+        parts.append(
+            f'<td class="num"><strong>{person_tot:.1f}</strong></td>'
+            f'<td class="num"><strong>{rem_h:.1f}</strong></td></tr>'
+        )
 
     parts.append('<tr class="total"><td>Team total</td>')
     for j in range(len(display_dates)):
         parts.append(f'<td class="num">{col_totals[j]:.1f}</td>')
-    parts.append(f'<td class="num">{team_sum:.1f}</td></tr></tbody></table>')
+    parts.append(
+        f'<td class="num">{team_logged:.1f}</td>'
+        f'<td class="num">{team_remaining:.1f}</td></tr></tbody></table>'
+    )
     return "".join(parts)
 
 
@@ -99,10 +113,14 @@ def generate_html_report(
     """
     Return a self-contained HTML sprint report.
 
+    ``chart_path`` is accepted for backward compatibility but is **not** embedded;
+    the hours bar chart was removed from the report UI.
+
     ``theme``:
       - ``None`` — browser dual-theme CSS (OS preference + optional toggle)
       - ``"light"`` / ``"dark"`` — resolved single-theme CSS (GUI preview)
     """
+    _ = chart_path  # intentionally unused — chart no longer embedded in HTML
     all_dates = working_dates_in_range(sprint_start, sprint_end)
     report_cap = _log_window_end(
         sprint_end,
@@ -164,21 +182,34 @@ def generate_html_report(
     body.append(chips)
     body.append("</div>")
 
+    rem_story = _remaining_hours_by_assignee(config, issues or [], bucket="story")
+    rem_task = _remaining_hours_by_assignee(config, issues or [], bucket="task")
+
     body.append(
         '<p class="note">Worklog source: by <strong>worklog author</strong>, for team members '
         "with Include = Yes. Weekday columns cover "
         f"<strong>[{sprint_start.isoformat()}, {report_cap.isoformat()}]</strong>. "
-        "Stories and Tasks are separate tables; sub-task logs appear only under validation.</p>"
+        "<strong>Logged</strong> comes from worklogs; <strong>Remaining (h)</strong> sums each "
+        "assignee’s Story/Task <strong>remaining estimates</strong> in Jira (not original estimate). "
+        "Sub-task logs appear only under validation.</p>"
     )
 
     body.append("<section>")
-    body.append("<h2>Logged Hours by Person — Stories</h2>")
-    body.append(_hours_table_html(work_report, display_dates, "story", "Total (stories)"))
+    body.append("<h2>Stories — logged hours &amp; remaining</h2>")
+    body.append(
+        _hours_table_html(
+            work_report, display_dates, "story", "Logged (h)", rem_story,
+        )
+    )
     body.append("</section>")
 
     body.append("<section>")
-    body.append("<h2>Logged Hours by Person — Tasks (non-story)</h2>")
-    body.append(_hours_table_html(work_report, display_dates, "task", "Total (tasks)"))
+    body.append("<h2>Tasks (non-story) — logged hours &amp; remaining</h2>")
+    body.append(
+        _hours_table_html(
+            work_report, display_dates, "task", "Logged (h)", rem_task,
+        )
+    )
     body.append("</section>")
 
     if issues is not None and team_completion is not None:
@@ -366,20 +397,6 @@ def generate_html_report(
                     f"<td class='num'>{escape(sp_text)}</td></tr>"
                 )
             body.append("</tbody></table>")
-        body.append("</section>")
-
-    if chart_path:
-        chart_name = Path(chart_path).name
-        body.append("<section>")
-        body.append("<h2>Hours chart</h2>")
-        body.append(
-            f'<div class="chart-wrap"><img src="{escape(chart_name)}" '
-            f'alt="Stacked daily hours for {escape(config.sprint_name)}" /></div>'
-        )
-        body.append(
-            '<p class="muted">Stacked hours per working day (Story + Task worklogs). '
-            "Remaining-work burndown line is under development.</p>"
-        )
         body.append("</section>")
 
     body.append(
