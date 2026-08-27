@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 from config_parser import SprintConfig
 from gui.report_view_model import ReportViewModel
 from gui.settings import AppSettings, output_dir_default
-from gui.theme import theme_colors, ticket_type_chips
+from gui.theme import theme_colors, ticket_type_chips, overview_chip_style
 from gui.widgets.capsule_bar import CapsuleBar
 from gui.workers.jira_workers import GenerateReportWorker, run_worker
 
@@ -512,30 +512,50 @@ class GeneratePage(QWidget):
         self.section_nav.set_label(_TAB_FIXUPS, f"Fix-ups ({n})" if n else "Fix-ups")
 
     def _populate_overview(self, vm: ReportViewModel) -> None:
-        c = theme_colors()
         while self.chips_grid.count():
             item = self.chips_grid.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         for i, chip in enumerate(vm.chips):
+            cs = overview_chip_style(chip.label)
             frame = QFrame()
+            frame.setObjectName("overviewChip")
             frame.setStyleSheet(
-                f"QFrame {{ background: {c['header']}; border: 1px solid {c['border']}; "
-                f"border-radius: 10px; padding: 4px; }}"
+                f"QFrame#overviewChip {{ background: {cs['bg']}; "
+                f"border: 1px solid {cs['border']}; border-radius: 10px; }}"
+                f"QFrame#overviewChip QLabel {{ background: transparent; border: none; }}"
             )
-            fl = QVBoxLayout(frame)
-            fl.setContentsMargins(10, 8, 10, 8)
-            fl.setSpacing(2)
+            row = QHBoxLayout(frame)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(0)
+            stripe = QFrame()
+            stripe.setFixedWidth(4)
+            stripe.setStyleSheet(
+                f"background: {cs['accent']}; border: none; "
+                f"border-top-left-radius: 9px; border-bottom-left-radius: 9px;"
+            )
+            row.addWidget(stripe)
+            content = QWidget()
+            content.setStyleSheet("background: transparent; border: none;")
+            fl = QVBoxLayout(content)
+            fl.setContentsMargins(12, 10, 12, 10)
+            fl.setSpacing(4)
+            lab = QLabel(chip.label)
+            lab.setWordWrap(True)
+            lab.setStyleSheet(
+                f"font-size: 13px; font-weight: 600; color: {cs['label']};"
+            )
+            fl.addWidget(lab)
             val = QLabel(chip.value)
-            val.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {c['text']};")
+            val.setStyleSheet(
+                f"font-size: 22px; font-weight: 700; color: {cs['value']};"
+            )
             fl.addWidget(val)
             if chip.detail:
                 detail = QLabel(chip.detail)
-                detail.setStyleSheet(f"font-size: 12px; color: {c['accent_text']};")
+                detail.setStyleSheet(f"font-size: 12px; color: {cs['detail']};")
                 fl.addWidget(detail)
-            lab = QLabel(chip.label)
-            lab.setStyleSheet(f"font-size: 11px; color: {c['muted']};")
-            fl.addWidget(lab)
+            row.addWidget(content, stretch=1)
             self.chips_grid.addWidget(frame, i // 4, i % 4)
 
         if vm.fixup_count:

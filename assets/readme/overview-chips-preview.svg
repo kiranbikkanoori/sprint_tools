@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">Overview scorecard chips - color preview</title>
+  <desc id="desc">Semantic colored chips for the Generate Overview tab: label on top, value, detail, left accent stripe.</desc>
+
+  <rect width="1200" height="520" rx="26" fill="#F7F9FC"/>
+  <rect x="1" y="1" width="1198" height="518" rx="25" fill="none" stroke="#D5DEEC"/>
+
+  <text x="56" y="44" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="700" fill="#0B3D91" letter-spacing="1.4">OVERVIEW CHIPS</text>
+  <text x="56" y="76" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="700" fill="#0F172A">Semantic color set (light theme preview)</text>
+  <text x="56" y="102" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" fill="#64748B">Open this file locally: assets/readme/overview-chips-preview.svg</text>
+
+  <!-- row 1 -->
+  <g transform="translate(56 130)">
+    <rect width="250" height="108" rx="10" fill="#E8F0FF" stroke="#BFDBFE"/>
+    <rect width="4" height="108" rx="2" fill="#2176FF"/>
+    <text x="16" y="28" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="600" fill="#0B3D91">Completion (tickets)</text>
+    <text x="16" y="58" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="22" font-weight="700" fill="#0F172A">75%</text>
+    <text x="16" y="80" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#1D4ED8">6/8</text>
+  </g>
+
+  <g transform="translate(326 130)">
+    <rect width="250" height="108" rx="10" fill="#EDE9FE" stroke="#DDD6FE"/>
+    <rect width="4" height="108" rx="2" fill="#7C3AED"/>
+    <text x="16" y="28" font-size="13" font-weight="600" fill="#5B21B6">Completion (SP)</text>
+    <text x="16" y="58" font-size="22" font-weight="700" fill="#0F172A">80%</text>
+    <text x="16" y="80" font-size="12" fill="#6D28D9">16/20 SP</text>
+  </g>
+
+  <g transform="translate(596 130)">
+    <rect width="250" height="108" rx="10" fill="#D1FAE5" stroke="#A7F3D0"/>
+    <rect width="4" height="108" rx="2" fill="#059669"/>
+    <text x="16" y="28" font-size="13" font-weight="600" fill="#065F46">Velocity</text>
+    <text x="16" y="58" font-size="22" font-weight="700" fill="#0F172A">0.70 SP/day</text>
+    <text x="16" y="80" font-size="12" fill="#047857">14 SP / 20d</text>
+  </g>
+
+  <g transform="translate(866 130)">
+    <rect width="250" height="108" rx="10" fill="#F1F5F9" stroke="#E2E8F0"/>
+    <rect width="4" height="108" rx="2" fill="#64748B"/>
+    <text x="16" y="28" font-size="13" font-weight="600" fill="#334155">Open tickets</text>
+    <text x="16" y="58" font-size="22" font-weight="700" fill="#0F172A">3</text>
+    <text x="16" y="80" font-size="12" fill="#475569">3 open / 18 committed</text>
+  </g>
+
+  <!-- row 2 -->
+  <g transform="translate(56 260)">
+    <rect width="250" height="108" rx="10" fill="#FFF7ED" stroke="#FED7AA"/>
+    <rect width="4" height="108" rx="2" fill="#EA580C"/>
+    <text x="16" y="28" font-size="13" font-weight="600" fill="#9A3412">Churn</text>
+    <text x="16" y="58" font-size="22" font-weight="700" fill="#0F172A">2</text>
+    <text x="16" y="80" font-size="12" fill="#C2410C">2 added after start</text>
+  </g>
+
+  <g transform="translate(326 260)">
+    <rect width="250" height="108" rx="10" fill="#FFEDD5" stroke="#FDBA74"/>
+    <rect width="4" height="108" rx="2" fill="#F97316"/>
+    <text x="16" y="28" font-size="13" font-weight="600" fill="#C2410C">Team remaining</text>
+    <text x="16" y="58" font-size="22" font-weight="700" fill="#0F172A">24.0h</text>
+    <text x="16" y="80" font-size="12" fill="#EA580C">of 136.0h capacity</text>
+  </g>
+
+  <g transform="translate(596 260)">
+    <rect width="250" height="108" rx="10" fill="#E0F2FE" stroke="#BAE6FD"/>
+    <rect width="4" height="108" rx="2" fill="#0284C7"/>
+    <text x="16" y="28" font-size="13" font-weight="600" fill="#075985">Team capacity</text>
+    <text x="16" y="58" font-size="22" font-weight="700" fill="#0F172A">136.0h</text>
+    <text x="16" y="80" font-size="12" fill="#0369A1">24.0h still remaining</text>
+  </g>
+
+  <!-- legend -->
+  <g transform="translate(56 400)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#64748B">
+    <text x="0" y="0">Blue = completion tickets</text>
+    <text x="200" y="0">Purple = SP</text>
+    <text x="320" y="0">Green = velocity</text>
+    <text x="440" y="0">Slate = open</text>
+    <text x="540" y="0">Amber = churn</text>
+    <text x="640" y="0">Orange = remaining</text>
+    <text x="780" y="0">Sky = capacity</text>
+  </g>
+</svg>
