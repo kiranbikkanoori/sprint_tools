@@ -46,9 +46,9 @@ class SprintWorkReport:
     """Per-person story vs task hours per calendar day (sprint window)."""
 
     included_names: list[str]
-    # person -> date -> {"story": h, "task": h}
+    # person -> date -> {"story": h, "task": h, "subtask": h}
     daily_story_task: dict[str, dict[date, dict[str, float]]] = field(default_factory=dict)
-    # person -> date -> "story" | "task" -> issue_key -> hours (same window as daily_story_task)
+    # person -> date -> "story" | "task" | "subtask" -> issue_key -> hours
     daily_ticket_hours: dict[str, dict[date, dict[str, dict[str, float]]]] = field(
         default_factory=dict
     )
@@ -188,11 +188,16 @@ def build_sprint_work_report(
     log_end = _log_window_end(sprint_end, report_date)
 
     daily: dict[str, dict[date, dict[str, float]]] = {
-        name: defaultdict(lambda: {"story": 0.0, "task": 0.0}) for name in included
+        name: defaultdict(lambda: {"story": 0.0, "task": 0.0, "subtask": 0.0})
+        for name in included
     }
     detail: dict[str, dict[date, dict[str, dict[str, float]]]] = {
         name: defaultdict(
-            lambda: {"story": defaultdict(float), "task": defaultdict(float)}
+            lambda: {
+                "story": defaultdict(float),
+                "task": defaultdict(float),
+                "subtask": defaultdict(float),
+            }
         )
         for name in included
     }
@@ -231,6 +236,9 @@ def build_sprint_work_report(
                 author = wl["author"]
                 hrs = wl["seconds"] / 3600.0
                 child_wl_accum[key][author] += hrs
+                if author in included_set:
+                    daily[author][wl_date]["subtask"] += hrs
+                    detail[author][wl_date]["subtask"][key] += hrs
             continue
 
         if itype not in ("Story", "Task"):
@@ -273,7 +281,11 @@ def build_sprint_work_report(
     detail_out: dict[str, dict[date, dict[str, dict[str, float]]]] = {}
     for name in included:
         daily_out[name] = {
-            d: {"story": v["story"], "task": v["task"]}
+            d: {
+                "story": v["story"],
+                "task": v["task"],
+                "subtask": v.get("subtask", 0.0),
+            }
             for d, v in sorted(daily[name].items())
         }
         detail_out[name] = {}
@@ -281,6 +293,7 @@ def build_sprint_work_report(
             detail_out[name][d] = {
                 "story": dict(buckets["story"]),
                 "task": dict(buckets["task"]),
+                "subtask": dict(buckets.get("subtask", {})),
             }
 
     return SprintWorkReport(
@@ -314,6 +327,29 @@ def build_effective_days_by_person(
         leave_d = leaves_by_name.get(name, 0.0)
         eff_d = max(0.0, work_days - meeting_days - leave_d)
         out[name] = eff_d
+    return out
+
+
+def build_capacity_hours_by_person(
+    config: SprintConfig,
+    work_report: SprintWorkReport,
+) -> dict[str, float]:
+    """Full-sprint capacity hours per included person (8h/day − other exclusions)."""
+    work_days = float(config.sprint_duration_weeks) * 5.0
+    meeting_days = float(config.meeting_days_reserved)
+    leaves_by_name: dict[str, float] = defaultdict(float)
+    for entry in config.planned_leaves:
+        leaves_by_name[entry.name] += float(entry.days)
+    excl_hours_by_name: dict[str, float] = defaultdict(float)
+    for entry in config.other_exclusions:
+        excl_hours_by_name[entry.name] += float(entry.hours)
+
+    out: dict[str, float] = {}
+    for name in work_report.included_names:
+        leave_d = leaves_by_name.get(name, 0.0)
+        other_h = excl_hours_by_name.get(name, 0.0)
+        eff_d = max(0.0, work_days - meeting_days - leave_d)
+        out[name] = max(0.0, eff_d * 8.0 - other_h)
     return out
 
 

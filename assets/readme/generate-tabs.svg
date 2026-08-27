@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
+  <title id="title">Generate review tabs are peers</title>
+  <desc id="desc">Five equal capsules. Each capsule opens its own view: Overview, Hours, Fix-ups, Tickets, KPIs.</desc>
+
+  <rect width="1200" height="340" rx="26" fill="#F7F9FC"/>
+  <rect x="1" y="1" width="1198" height="338" rx="25" fill="none" stroke="#D5DEEC"/>
+
+  <text x="56" y="40" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="700" fill="#0B3D91" letter-spacing="1.4">AFTER GENERATE</text>
+  <text x="56" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="700" fill="#0F172A">Five peer tabs - click a capsule to switch</text>
+  <text x="56" y="98" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" fill="#64748B">Nothing below lives under Overview. Each card is its own tab.</text>
+
+  <!-- equal capsules (none selected as parent of the others) -->
+  <g transform="translate(56 118)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13">
+    <rect width="100" height="34" rx="17" fill="#EEF3FA" stroke="#2176FF" stroke-width="2"/>
+    <text x="50" y="22" text-anchor="middle" font-weight="700" fill="#0B3D91">Overview</text>
+    <rect x="220" y="0" width="78" height="34" rx="17" fill="#EEF3FA" stroke="#2176FF" stroke-width="2"/>
+    <text x="259" y="22" text-anchor="middle" font-weight="700" fill="#0B3D91">Hours</text>
+    <rect x="440" y="0" width="92" height="34" rx="17" fill="#EEF3FA" stroke="#2176FF" stroke-width="2"/>
+    <text x="486" y="22" text-anchor="middle" font-weight="700" fill="#0B3D91">Fix-ups</text>
+    <rect x="660" y="0" width="88" height="34" rx="17" fill="#EEF3FA" stroke="#2176FF" stroke-width="2"/>
+    <text x="704" y="22" text-anchor="middle" font-weight="700" fill="#0B3D91">Tickets</text>
+    <rect x="880" y="0" width="70" height="34" rx="17" fill="#EEF3FA" stroke="#2176FF" stroke-width="2"/>
+    <text x="915" y="22" text-anchor="middle" font-weight="700" fill="#0B3D91">KPIs</text>
+  </g>
+
+  <!-- connector lines: capsule -> its card -->
+  <g stroke="#94A3B8" stroke-width="2" fill="none">
+    <path d="M106 152 V168"/>
+    <path d="M295 152 V168"/>
+    <path d="M486 152 V168"/>
+    <path d="M704 152 V168"/>
+    <path d="M915 152 V168"/>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" transform="translate(56 172)">
+    <g>
+      <rect width="200" height="132" rx="14" fill="#FFFFFF" stroke="#D5DEEC"/>
+      <text x="16" y="26" font-size="14" font-weight="700" fill="#0F172A">1. Overview</text>
+      <text x="16" y="52" font-size="12" fill="#475569">Scorecard chips</text>
+      <text x="16" y="72" font-size="12" fill="#475569">Live-status banner</text>
+      <text x="16" y="92" font-size="12" fill="#475569">Sprint goal</text>
+      <text x="16" y="116" font-size="11" fill="#64748B">Own tab</text>
+    </g>
+    <g transform="translate(220 0)">
+      <rect width="200" height="132" rx="14" fill="#FFFFFF" stroke="#D5DEEC"/>
+      <text x="16" y="26" font-size="14" font-weight="700" fill="#0F172A">2. Hours</text>
+      <rect x="16" y="40" width="78" height="18" rx="4" fill="#DBEAFE"/>
+      <text x="55" y="53" text-anchor="middle" font-size="10" font-weight="600" fill="#0C4A6E">Story</text>
+      <rect x="100" y="40" width="70" height="18" rx="4" fill="#EDE9FE"/>
+      <text x="135" y="53" text-anchor="middle" font-size="10" font-weight="600" fill="#5B21B6">Task</text>
+      <text x="16" y="80" font-size="12" fill="#475569">One combined table</text>
+      <text x="16" y="100" font-size="12" fill="#475569">Logged / Remaining</text>
+      <text x="16" y="116" font-size="11" fill="#64748B">Own tab</text>
+    </g>
+    <g transform="translate(440 0)">
+      <rect width="200" height="132" rx="14" fill="#FFFFFF" stroke="#D5DEEC"/>
+      <text x="16" y="26" font-size="14" font-weight="700" fill="#0F172A">3. Fix-ups</text>
+      <text x="16" y="52" font-size="12" fill="#475569">Churn / warn rows</text>
+      <text x="16" y="72" font-size="12" fill="#475569">Sub-task hygiene</text>
+      <text x="16" y="92" font-size="12" fill="#475569">Action queue only</text>
+      <text x="16" y="116" font-size="11" fill="#64748B">Own tab</text>
+    </g>
+    <g transform="translate(660 0)">
+      <rect width="200" height="132" rx="14" fill="#FFFFFF" stroke="#D5DEEC"/>
+      <text x="16" y="26" font-size="14" font-weight="700" fill="#0F172A">4. Tickets</text>
+      <text x="16" y="52" font-size="12" fill="#475569">Full Story / Task list</text>
+      <text x="16" y="72" font-size="12" fill="#475569">Filters + warn color</text>
+      <text x="16" y="92" font-size="12" fill="#475569">Unfinished first</text>
+      <text x="16" y="116" font-size="11" fill="#64748B">Own tab</text>
+    </g>
+    <g transform="translate(880 0)">
+      <rect width="208" height="132" rx="14" fill="#FFFFFF" stroke="#D5DEEC"/>
+      <text x="16" y="26" font-size="14" font-weight="700" fill="#0F172A">5. KPIs</text>
+      <text x="16" y="52" font-size="12" fill="#475569">KPI Summary</text>
+      <text x="16" y="72" font-size="12" fill="#475569">Completion / Velocity</text>
+      <text x="16" y="92" font-size="12" fill="#475569">Team + per-person</text>
+      <text x="16" y="116" font-size="11" fill="#64748B">Own tab</text>
+    </g>
+  </g>
+</svg>

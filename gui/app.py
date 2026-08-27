@@ -144,12 +144,56 @@ def _warm_up_ssl():
         logging.exception("SSL/certifi warm-up failed (non-fatal)")
 
 
+def _linux_gui_prereq_error() -> str | None:
+    """Return a user-facing message when Qt's xcb plugin cannot load on Linux."""
+    if sys.platform != "linux":
+        return None
+    import ctypes
+
+    for lib in ("libxcb-cursor.so.0", "libxcb-cursor.so"):
+        try:
+            ctypes.CDLL(lib)
+            return None
+        except OSError:
+            continue
+    return (
+        "Qt could not start: libxcb-cursor is missing (required by Qt 6.5+ on Linux).\n\n"
+        "On Debian / Ubuntu / WSL, install it and retry:\n"
+        "  sudo apt install libxcb-cursor0\n\n"
+        "If the window still does not appear, ensure a display is available "
+        "(WSLg on Windows 11, or an X server with DISPLAY set)."
+    )
+
+
+def _fatal_startup(msg: str, log_path: Path) -> int:
+    logging.critical(msg)
+    # console=False builds may have NullWriter stderr; still try real streams.
+    for stream in (getattr(sys, "__stderr__", None), sys.stderr):
+        if stream is not None and hasattr(stream, "write") and stream.write is not _NullWriter.write:
+            try:
+                stream.write(msg + "\n")
+                stream.flush()
+            except Exception:
+                pass
+            break
+    try:
+        hint = log_path.parent / "last_startup_error.txt"
+        hint.write_text(msg + "\n", encoding="utf-8")
+    except Exception:
+        pass
+    return 1
+
+
 def main() -> int:
     log_path = _setup_logging()
     sys.excepthook = _make_exception_hook(log_path)
     threading.excepthook = _thread_exception_hook
     qInstallMessageHandler(_qt_message_handler)
     _warm_up_ssl()
+
+    prereq = _linux_gui_prereq_error()
+    if prereq:
+        return _fatal_startup(prereq, log_path)
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)

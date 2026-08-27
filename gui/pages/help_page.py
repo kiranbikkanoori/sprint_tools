@@ -297,7 +297,7 @@ class HelpPage(QWidget):
 
         self.title = QLabel("Help")
         self.subtitle = QLabel(
-            "In-app guide from README.md — same instructions as the project homepage."
+            "How to use the app (capsules + Generate review). Export file layout is at the end."
         )
         self.subtitle.setWordWrap(True)
         self._apply_chrome_styles()

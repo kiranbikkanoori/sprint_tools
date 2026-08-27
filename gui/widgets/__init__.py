@@ -1,1 +1,1 @@
-
+"""GUI shared widgets package."""

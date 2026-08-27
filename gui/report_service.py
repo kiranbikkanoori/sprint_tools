@@ -18,6 +18,7 @@ from config_parser import SprintConfig
 from utils import effective_issue_type
 from report_generator import build_sprint_work_report, generate_text_report
 from report_html import generate_html_report
+from gui.report_view_model import build_report_view_model
 
 
 def generate_outputs(
@@ -27,12 +28,13 @@ def generate_outputs(
     *,
     make_report: bool = True,
     make_chart: bool = True,
-) -> dict[str, Path]:
+) -> dict:
     """
-    Generate the markdown report, styled HTML report, and burndown chart.
+    Generate the markdown report, styled HTML report, optional chart, and
+    a structured ``view_model`` for the native Generate UI.
 
-    Returns a dict with keys ``report``, ``report_html``, and/or ``chart``
-    mapping to the written file paths.
+    Returns a dict with keys ``report``, ``report_html``, ``chart`` (paths)
+    and ``view_model`` (``ReportViewModel``).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -53,10 +55,11 @@ def generate_outputs(
     )
 
     safe_name = (config.sprint_name or sprint_info.get("name", "sprint")).replace(" ", "_")
-    written: dict[str, Path] = {}
+    written: dict = {
+        "view_model": build_report_view_model(config, payload, work_report),
+    }
     chart_path: Path | None = None
 
-    # Chart first so the HTML report can embed it when both are requested.
     if make_chart:
         from burndown_chart import generate_burndown_chart
 

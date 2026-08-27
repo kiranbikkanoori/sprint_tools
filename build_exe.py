@@ -11,6 +11,9 @@ Prerequisites
     pip install -r requirements.txt
     pip install -r requirements-gui.txt
 
+Linux / WSL (to run the built GUI, not only to build it):
+    sudo apt install libxcb-cursor0
+
 Output
 ------
     dist/SprintReport.exe   (on Windows)

@@ -28,6 +28,8 @@ hidden_imports = [
     "burndown_chart",
     "fetch_sprint_data",
     "utils",
+    "gui.report_view_model",
+    "gui.widgets.capsule_bar",
     # PySide6 sub-modules sometimes missed by the analyser:
     "PySide6.QtCore",
     "PySide6.QtGui",

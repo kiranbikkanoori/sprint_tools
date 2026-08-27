@@ -1,41 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="260" viewBox="0 0 1200 260" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
   <title id="title">Logged hours table shape</title>
-  <desc id="desc">Mock of the Stories or Tasks hours table: people as rows, weekdays as columns, team total at the bottom.</desc>
-  <rect width="1200" height="260" rx="20" fill="#F7F9FC"/>
-  <rect x="1" y="1" width="1198" height="258" rx="19" fill="none" stroke="#D5DEEC"/>
-  <text x="40" y="42" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700" fill="#0F172A">Logged Hours by Person</text>
-  <text x="40" y="68" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#64748B">Stories table and Tasks table share this layout</text>
+  <desc id="desc">Mock of Stories or Tasks hours: people, weekdays with ticket keys, Logged, Remaining, team total.</desc>
+  <rect width="1200" height="280" rx="20" fill="#F7F9FC"/>
+  <rect x="1" y="1" width="1198" height="278" rx="19" fill="none" stroke="#D5DEEC"/>
+  <text x="40" y="40" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="700" fill="#0F172A">Export hours (Stories or Tasks section)</text>
+  <text x="40" y="64" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#64748B">File has two sections  |  App Hours tab is one combined table instead</text>
 
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" transform="translate(40 90)">
-    <rect width="1120" height="36" fill="#EEF3FA"/>
-    <text x="16" y="23" font-weight="700" fill="#0B3D91">Person</text>
-    <text x="280" y="23" font-weight="700" fill="#0B3D91">May 27</text>
-    <text x="420" y="23" font-weight="700" fill="#0B3D91">May 28</text>
-    <text x="560" y="23" font-weight="700" fill="#0B3D91">May 29</text>
-    <text x="700" y="23" font-weight="700" fill="#0B3D91">...</text>
-    <text x="900" y="23" font-weight="700" fill="#0B3D91">Total</text>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" transform="translate(40 84)">
+    <rect width="1120" height="34" fill="#EEF3FA"/>
+    <text x="14" y="22" font-weight="700" fill="#0B3D91">Person</text>
+    <text x="220" y="22" font-weight="700" fill="#0B3D91">May 27</text>
+    <text x="420" y="22" font-weight="700" fill="#0B3D91">May 28</text>
+    <text x="620" y="22" font-weight="700" fill="#0B3D91">May 29</text>
+    <text x="820" y="22" font-weight="700" fill="#0B3D91">Logged</text>
+    <text x="960" y="22" font-weight="700" fill="#0B3D91">Remaining</text>
 
-    <rect y="36" width="1120" height="40" fill="#FFFFFF"/>
-    <text x="16" y="61" fill="#334155">Alex Developer</text>
-    <text x="280" y="61" fill="#334155">8.0</text>
-    <text x="420" y="61" fill="#334155">6.0</text>
-    <text x="560" y="61" fill="#334155">8.0</text>
-    <text x="700" y="61" fill="#94A3B8">ticket keys</text>
-    <text x="900" y="61" font-weight="700" fill="#0F172A">62.0</text>
+    <rect y="34" width="1120" height="52" fill="#FFFFFF"/>
+    <text x="14" y="56" fill="#334155">Alex Developer</text>
+    <text x="220" y="50" fill="#334155">8.0</text>
+    <text x="220" y="68" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#0C4A6E">RSCDEV-1204</text>
+    <text x="420" y="50" fill="#334155">6.0</text>
+    <text x="420" y="68" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#5B21B6">RSCDEV-1211</text>
+    <text x="620" y="56" fill="#334155">8.0</text>
+    <text x="820" y="56" font-weight="700" fill="#0F172A">62.0</text>
+    <text x="960" y="56" font-weight="700" fill="#0F172A">12.0</text>
 
-    <rect y="76" width="1120" height="40" fill="#FAFBFC"/>
-    <text x="16" y="101" fill="#334155">Sam Engineer</text>
-    <text x="280" y="101" fill="#334155">4.0</text>
-    <text x="420" y="101" fill="#334155">8.0</text>
-    <text x="560" y="101" fill="#334155">8.0</text>
-    <text x="700" y="101" fill="#94A3B8">under daily total</text>
-    <text x="900" y="101" font-weight="700" fill="#0F172A">58.0</text>
+    <rect y="86" width="1120" height="52" fill="#FAFBFC"/>
+    <text x="14" y="108" fill="#334155">Sam Engineer</text>
+    <text x="220" y="108" fill="#334155">4.0</text>
+    <text x="420" y="102" fill="#334155">8.0</text>
+    <text x="420" y="120" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#991B1B">RSCDEV-1219 ✗</text>
+    <text x="620" y="108" fill="#334155">8.0</text>
+    <text x="820" y="108" font-weight="700" fill="#0F172A">58.0</text>
+    <text x="960" y="108" font-weight="700" fill="#0F172A">4.5</text>
 
-    <rect y="116" width="1120" height="40" fill="#F0F4FF"/>
-    <text x="16" y="141" font-weight="700" fill="#0B3D91">Team total</text>
-    <text x="280" y="141" font-weight="700" fill="#0B3D91">12.0</text>
-    <text x="420" y="141" font-weight="700" fill="#0B3D91">14.0</text>
-    <text x="560" y="141" font-weight="700" fill="#0B3D91">16.0</text>
-    <text x="900" y="141" font-weight="700" fill="#2176FF">120.0</text>
+    <rect y="138" width="1120" height="40" fill="#F0F4FF"/>
+    <text x="14" y="163" font-weight="700" fill="#0B3D91">Team total</text>
+    <text x="220" y="163" font-weight="700" fill="#0B3D91">12.0</text>
+    <text x="420" y="163" font-weight="700" fill="#0B3D91">14.0</text>
+    <text x="620" y="163" font-weight="700" fill="#0B3D91">16.0</text>
+    <text x="820" y="163" font-weight="700" fill="#2176FF">120.0</text>
+    <text x="960" y="163" font-weight="700" fill="#2176FF">16.5</text>
   </g>
 </svg>

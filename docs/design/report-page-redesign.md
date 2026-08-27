@@ -1,139 +1,203 @@
-# Sprint report page redesign
+# Sprint report page redesign — locked decisions
 
-Saved so this work survives even if the Cursor canvas viewer stops opening.
+Build checklist for the **in-app Generate report surface** (native tabs).  
+MD/HTML exports stay for sharing; they do **not** have to mirror tab layout 1:1.
 
 | Artifact | Path |
 |----------|------|
-| Design brief (this file) | `docs/design/report-page-redesign.md` |
-| Canvas source (backup) | `docs/design/report-page-redesign.canvas.tsx` |
-| Live Cursor canvas (when available) | `~/.cursor/projects/home-kibikkan-sprint-tools/canvases/report-page-redesign.canvas.tsx` |
+| This brief | `docs/design/report-page-redesign.md` |
+| Canvas backup (old mockups) | `docs/design/report-page-redesign.canvas.tsx` |
+| Status / re-run caveat | `docs/design/ticket-status-across-sprints.md` |
+| App shell capsules | `docs/design/app-shell-redesign.md` |
 
-**Sample data used:** `output/sprint_report_Wi-Fi_LMAC_2026_11.md`  
-**Current UI:** Generate page loads exported HTML into `QTextBrowser` (`gui/pages/generate_page.py`).
+**Help** stays a **separate app tab** (not inside Generate).  
+**No bar charts** in the Generate UI.
 
 ---
 
 ## Problem
 
-The Generate page treats the export file as the UI.
-
-- Wide hours tables are hard to scan in `QTextBrowser`
-- Theme toggle / JS is stripped in-app
-- MD fallback is raw text
-- No section jump, filter, sort, or drill-down
-- Validation / hygiene / churn are buried mid-document
-
-MD + HTML exports should stay for sharing. The **in-app page** should become a native review surface.
+Generate today loads the export into `QTextBrowser`. Wide tables are hard to use; there is no jump/filter/drill-down. Rebuild Generate as a native review UI fed by structured report data (not by re-parsing HTML).
 
 ---
 
-## Concepts
+## Personas
 
-### Today — document preview
+| Persona | Primary path after Generate |
+|---------|----------------------------|
+| **Scrum master / presenter** | Fix-ups (if any) → Overview → Hours |
+| **Developer** | Hours → Tickets |
 
-One long HTML/MD scroll. Same content as the file; no navigation.
-
-### A — Sprint briefing
-
-- KPI hero first (completion, SP %, velocity, churn)
-- Deep tables behind tabs: Overview · Hours · Validation · Tickets
-- **No bar charts** — numbers and tables only
-
-**Strength:** Matches end-of-sprint review.  
-**Weak spot:** Hours matrix needs a strong Hours tab.
-
-### B — Hours explorer
-
-- Stories / Tasks toggle
-- Person × weekday matrix
-- Cell click opens side panel with ticket keys + hours (instead of cramming keys into every cell)
-
-**Strength:** Fixes the worst readability problem.  
-**Weak spot:** Needs a thin KPI header so completion/velocity aren’t buried.
-
-### C — Attention triage
-
-Surface first:
-
-1. Unfinished tickets
-2. Done-with-remaining hygiene flags
-3. Mid-sprint adds (churn)
-4. Sub-task worklogs / remaining
-
-**Strength:** Great for mid-sprint / SM review.  
-**Weak spot:** Weak alone for hour audits.
-
-### D — Hybrid (**recommended**)
-
-Native shell with five tabs; exports stay shareable artifacts.
-
-| Tab | Shows | Replaces in MD/HTML |
-|-----|--------|---------------------|
-| Overview | KPI chips, team metrics, goal | Header + KPI + Completion |
-| Hours | Stories/Tasks matrix, cell detail drawer | Logged Hours tables |
-| Alerts | Churn, sub-task remaining, sub-task worklogs, warn rows | Validation + churn + warn tickets |
-| Tickets | Sortable/filterable status & remaining | Sprint Tickets table |
-
-**No Chart tab / no bar graphs** in the redesigned Generate UI (optional: keep PNG export for sharing only, not as an in-app graph).
-
-Actions on the page: **Open HTML** · **Reveal folder**.
-
-**Why this wins:** Same data pipeline; only the Generate UI changes. Native Qt tables fix hours/tickets without throwing away the report format.
-
-### App shell (related)
-
-- Top **capsule** nav for workflow: Settings · Sprint · Configure · Generate
-- **Help stays a separate tab** (not folded into the workflow) until users know the app
-- Same capsule language for report section tabs on Generate
+**Default tab after Generate:** **Fix-ups** if alert count &gt; 0, else **Overview**.
 
 ---
 
-## Sample KPI snapshot (Wi-Fi_LMAC_2026_11)
+## Tabs (locked)
 
-| Metric | Value |
-|--------|------:|
-| Ticket completion | 83% |
-| SP completion | 87% |
-| Velocity | 0.70 SP/day |
-| Story hours | 388h |
-| Task hours | 10h |
-| Unfinished | 3 |
-| Hygiene ⚠ | 2 |
-| Mid-sprint add | 1 |
-| Sub-task worklogs | 2 |
+| Tab | Single-sentence job |
+|-----|---------------------|
+| **Overview** | “Director/SM: is this sprint OK to present?” |
+| **Hours** | “Who logged what, what’s still assigned, vs capacity — and who logged on sub-tasks?” |
+| **Fix-ups** | “What needs a human action before we call the sprint clean?” (exceptions only) |
+| **Tickets** | “Full Story/Task inventory — filter, sort, find a key.” |
+| **KPIs** | “Familiar export tables: Sprint KPI Summary + Completion & Velocity.” |
+
+Actions on the page (all tabs): **Open HTML** · **Reveal folder**.
 
 ---
 
-## Suggested implementation order
+### 1. Overview
 
-1. **Slice 1:** Overview KPI strip + Alerts list + Tickets `QTableView` (no charts)
-2. **Slice 2:** Hours tab (Stories/Tasks matrix + cell detail drawer)
-3. **Slice 3:** Capsule app shell + polish; keep MD/HTML writers unchanged
+**Keep.** SM/director scorecard only — not a copy of the whole report.
 
-**Implementation note:** Expose structured dicts from `report_generator` (already computed) to the GUI instead of round-tripping through HTML.
+**Chips (no N/A rows):**
+
+- Completion (tickets %)
+- Completion (SP %)
+- Velocity (SP / person-day)
+- Open tickets count
+- Churn count
+- Team Remaining (h)
+- Team Capacity (h)
+
+**Also:**
+
+- Live-status banner (always): *Status and remaining are as of this generate run, not frozen at sprint end.*
+- Sprint goal: **full text**, in a **scrollable box under the chips** (chips stay above the fold; box max ~30% height).
+- Optional one-liner: “N fix-ups → open Fix-ups” (count only; no duplicate lists).
+
+**Do not put on Overview:** full KPI table with N/As, full completion tables, hours matrix, ticket grids, charts. Those live on the **KPIs** tab.
 
 ---
 
-## Important: how “closed” vs “open” works today
+### 1b. KPIs
 
-The tool uses the ticket’s **current** Jira status at the moment you run the report — **not** the status as of sprint end.
+**Keep.** Familiar SM scorecard tables from the MD/HTML export:
 
-“Done” = `status_category` is Done/Complete, **or** `status` is Resolved (`report_generator.py`).
+1. **Sprint KPI Summary** — `KPI | Value | Notes` (including N/A rows)
+2. **Sprint Completion & Velocity** — Team metrics + Per-person table
 
-See `docs/design/ticket-status-across-sprints.md` for move / re-run scenarios.
+
+### 2. Hours
+
+**In-app: Combined view only** (no Stories | Tasks mode toggles).
+
+**Export (MD/HTML):** keep separate Stories / Tasks tables + Remaining column as today (sharing/print).
+
+**Combined matrix columns:**
+
+- Person
+- Weekday columns through report date
+- **Logged (h)** (total)
+- **Remaining (h)** — one column = Story + Task remaining for that assignee
+- **Capacity (h)** — full sprint: `(work days − meeting − leave) × 8 − other exclusions`
+
+**Per day cell (option B):** show total plus three color-coded mini values:
+
+| Code | Meaning | Color intent |
+|------|---------|--------------|
+| **S** | Story worklogs | Distinct “story” color |
+| **T** | Task / Bug / other non-story, non-sub-task | Distinct “task” color |
+| **✗** | Sub-task worklogs (not allowed) | Warning / “shouldn’t log here” color |
+
+Legend visible on the tab. Cell click → drawer with ticket keys + hours (by type).
+
+**Sub-task hours:** shown in Combined (**✗**) **and** listed under Fix-ups (A).
 
 ---
 
-## How to reopen the interactive canvas later
+### 3. Fix-ups (renamed from “Alerts”)
 
-If the live canvas won’t open in Cursor:
+**Exceptions / action queue only** — not the full unfinished backlog.
 
-```bash
-mkdir -p ~/.cursor/projects/home-kibikkan-sprint-tools/canvases
-cp docs/design/report-page-redesign.canvas.tsx \
-  ~/.cursor/projects/home-kibikkan-sprint-tools/canvases/report-page-redesign.canvas.tsx
-```
+**Include only:**
 
-Then open the canvas from Cursor’s canvases UI, or ask the agent to “open the report-page-redesign canvas.”
+1. Mid-sprint adds (**Churn**)
+2. Done/Resolved with remaining **⚠**
+3. Sub-tasks with remaining estimate
+4. Sub-task worklogs in the report window
 
-You can always implement from **this markdown brief** alone — the `.canvas.tsx` is only for the interactive mockups.
+**Do not** duplicate the general “all open tickets” list here — that lives on **Tickets**.
+
+**Overlap with Tickets is OK:** a ⚠ or churn Story/Task appears in Fix-ups (action) **and** still in Tickets (inventory). Sub-tasks appear in Fix-ups only (Tickets stays Stories/Tasks).
+
+**Empty state:** “No fix-ups — sprint looks clean” + links/shortcuts to Overview / Hours / Tickets.
+
+**Unified table columns:**
+
+| Column | Content |
+|--------|---------|
+| Severity | High / Med / Low |
+| Type | Churn · ⚠ Remaining · Sub-task remaining · Sub-task worklog |
+| Key | Issue key |
+| Person | Assignee / author as relevant |
+| Summary | Short text |
+| Why / what to do | One-line guidance |
+
+**Severity guide:**
+
+- Churn + ticket still not done → **High**; churn on already-done → **Low**
+- ⚠ Remaining → **Med**
+- Sub-task remaining / sub-task worklog → **Med**
+
+---
+
+### 4. Tickets
+
+Full Story/Task list (excluded tickets dropped).
+
+**Default:** not-done first (same idea as current export sort), then status, then key.
+
+**v1 filters:** Status · Assignee · ⚠ only · Type (Story / Task).
+
+**Note:** same live-status caveat as Overview (short line OK).
+
+---
+
+## App shell (related, not Generate tabs)
+
+- Capsule workflow: Settings · Sprint · Configure · Generate  
+- Help remains separate  
+- Same capsule language for Generate section tabs: Overview · Hours · Fix-ups · Tickets · KPIs
+
+---
+
+## Implementation order (suggested)
+
+1. Structured data from `report_generator` → GUI (no HTML round-trip)
+2. Overview chips + banner + scrollable goal + default-tab rule  
+3. Fix-ups table + empty state  
+4. Tickets table + filters  
+5. Hours Combined matrix (S/T/✗ + Remaining + Capacity + drawer)  
+6. Capsule chrome polish  
+
+---
+
+## Explicit non-goals (this redesign)
+
+- Multi-team / director pack (later)
+- Point-in-time status as of sprint end (document caveat only for now)
+- Bar charts / Chart tab
+- In-app Stories | Tasks mode toggles (export keeps two tables)
+
+---
+
+## Grill outcomes (decision log)
+
+| Q | Choice |
+|---|--------|
+| Overview exists? | Yes — SM scorecard |
+| Overview job | Director/SM: OK to present? |
+| Capacity | On Hours (Logged / Remaining / Capacity) |
+| Fix-ups vs Tickets | Fix-ups = selected exceptions; Tickets = full list |
+| Default tab | Fix-ups if any, else Overview |
+| Hours modes | Combined only in-app |
+| Day cell | Total + S \| T \| ✗ color mini values |
+| Sub-task hours | Hours + Fix-ups |
+| Remaining | One combined column |
+| Overview goal | Full text, scrollable under chips |
+| Tab name | **Fix-ups** (not Alerts) |
+| Tickets default | Not done first |
+| Tickets filters v1 | Status, Assignee, ⚠, Type |
+
+When implementing, treat this file as source of truth over older canvas mockups (Hybrid “Alerts” / Chart / Stories-Tasks toggles are superseded).
