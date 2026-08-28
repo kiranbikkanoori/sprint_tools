@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDateEdit,
     QDoubleSpinBox,
     QFileDialog,
@@ -35,25 +36,38 @@ from config_parser import (
     TeamMember,
 )
 from gui import config_io, jira_service
+from gui.pack_model import PackSlot, ReportPack
 from gui.settings import AppSettings, configs_dir
 from gui.widgets.editable_table import Column, EditableTable
 
 
 class ConfigPage(QWidget):
-    """Holds the SprintConfig editor.  Emits ``config_ready(cfg)`` on Next."""
+    """Holds the SprintConfig editor.  Emits ``config_ready`` when the pack is ready."""
 
-    config_ready = Signal(object)
+    config_ready = Signal()
+    back_to_sprint = Signal()
 
     def __init__(self, settings: AppSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.settings = settings
         self.config: SprintConfig = SprintConfig()
         self.payload: dict = {}
+        self._pack = ReportPack()
+        self._active_index = -1
+        self._board_id = 0
 
         title = QLabel("<h2>Sprint configuration</h2>")
-        self.subtitle = QLabel("Load a sprint first to populate this form.")
+        self.subtitle = QLabel("Add a sprint on the Sprint tab to populate this form.")
         self.subtitle.setWordWrap(True)
         self.subtitle.setStyleSheet("color: #555;")
+
+        pack_row = QHBoxLayout()
+        pack_row.addWidget(QLabel("Editing"))
+        self.pack_combo = QComboBox()
+        self.pack_combo.setMinimumWidth(320)
+        pack_row.addWidget(self.pack_combo, stretch=1)
+        self.pack_hint = QLabel("")
+        pack_row.addWidget(self.pack_hint)
 
         # ── Sprint header ──
         header = QGroupBox("Sprint")
@@ -145,27 +159,32 @@ class ConfigPage(QWidget):
 
         # ── Action row ──
         actions = QHBoxLayout()
+        self.back_btn = QPushButton("← Sprint (add more)")
         self.import_btn = QPushButton("Import .md…")
         self.export_btn = QPushButton("Export .md…")
         self.save_btn = QPushButton("Save config")
         self.next_btn = QPushButton("Generate →")
         self.next_btn.setDefault(True)
+        actions.addWidget(self.back_btn)
         actions.addWidget(self.import_btn)
         actions.addWidget(self.export_btn)
         actions.addStretch(1)
         actions.addWidget(self.save_btn)
         actions.addWidget(self.next_btn)
 
+        self.back_btn.clicked.connect(self._on_back)
         self.import_btn.clicked.connect(self._import_md)
         self.export_btn.clicked.connect(self._export_md)
         self.save_btn.clicked.connect(self._save_json)
         self.next_btn.clicked.connect(self._on_next)
+        self.pack_combo.currentIndexChanged.connect(self._on_pack_member_changed)
 
         self.team_table.table.itemChanged.connect(self._refresh_combos)
 
         layout = QVBoxLayout(self)
         layout.addWidget(title)
         layout.addWidget(self.subtitle)
+        layout.addLayout(pack_row)
         layout.addWidget(header)
         layout.addWidget(cap)
         layout.addWidget(self.tabs, stretch=1)
@@ -201,16 +220,89 @@ class ConfigPage(QWidget):
         self.excl_table.refresh_combos()
         self.exticket_table.refresh_combos()
 
-    # ── public entry: called after a sprint is loaded ───────────────────
+    # ── pack binding ────────────────────────────────────────────────────
 
-    def populate_from_payload(self, payload: dict, sprint: dict) -> None:
-        log.info("ConfigPage.populate_from_payload: sprint=%s", sprint.get("name"))
-        self.payload = payload
+    def bind_pack(self, pack: ReportPack, active_index: int = 0) -> None:
+        """Attach the presenter pack and show the given member."""
+        self._pack = pack
+        self.pack_combo.blockSignals(True)
+        self.pack_combo.clear()
+        for slot in pack.slots:
+            self.pack_combo.addItem(slot.label)
+        self.pack_combo.blockSignals(False)
+        n = len(pack)
+        self.pack_hint.setText(f"{n} sprint{'s' if n != 1 else ''} in pack")
+        self.pack_combo.setEnabled(n > 1)
+        if n == 0:
+            self._active_index = -1
+            self.subtitle.setText("Add a sprint on the Sprint tab to populate this form.")
+            return
+        idx = max(0, min(active_index, n - 1))
+        self._active_index = -1  # force load
+        self.pack_combo.setCurrentIndex(idx)
+        self._load_slot(idx, flush_current=False)
+
+    def flush_active(self) -> None:
+        """Write the current form into the active pack slot."""
+        if self._active_index < 0 or self._active_index >= len(self._pack):
+            return
+        cfg = self.gather_config()
+        slot = self._pack.slots[self._active_index]
+        slot.config = cfg
+        slot.payload = self.payload
+        self.config = cfg
+        try:
+            if cfg.sprint_name:
+                config_io.save_json(
+                    cfg, configs_dir() / f"{cfg.sprint_name.replace(' ', '_')}.json"
+                )
+            self._persist_board_roster(cfg)
+        except Exception:  # noqa: BLE001
+            log.debug("flush_active save failed", exc_info=True)
+
+    def ensure_slot_config(self, slot: PackSlot) -> SprintConfig:
+        """Return slot.config, building a default from payload if missing."""
+        if slot.config is not None:
+            return slot.config
+        cfg = self.build_config_from_payload(slot.payload, slot.sprint, slot.board_id)
+        slot.config = cfg
+        return cfg
+
+    def _on_pack_member_changed(self, index: int) -> None:
+        if index < 0 or index >= len(self._pack):
+            return
+        if index == self._active_index:
+            return
+        self._load_slot(index, flush_current=True)
+
+    def _load_slot(self, index: int, *, flush_current: bool) -> None:
+        if flush_current and self._active_index >= 0:
+            self.flush_active()
+        if index < 0 or index >= len(self._pack):
+            return
+        slot = self._pack.slots[index]
+        self._active_index = index
+        self._board_id = slot.board_id
+        self.payload = slot.payload
+        self._last_sprint_meta = slot.sprint
+        sprint = slot.sprint
         self.subtitle.setText(
-            f"Sprint loaded: <b>{sprint.get('name', '')}</b> "
+            f"Editing: <b>{slot.label}</b> "
             f"({(sprint.get('startDate') or '')[:10]} → {(sprint.get('endDate') or '')[:10]}) — "
-            f"{len(payload.get('issues', []))} issues."
+            f"{len(slot.payload.get('issues', []))} issues."
         )
+        cfg = self.ensure_slot_config(slot)
+        self.set_config(cfg)
+
+    def _on_back(self) -> None:
+        self.flush_active()
+        self.back_to_sprint.emit()
+
+    # ── public entry: build / load config for a payload ─────────────────
+
+    def build_config_from_payload(
+        self, payload: dict, sprint: dict, board_id: int
+    ) -> SprintConfig:
         cfg = SprintConfig()
         cfg.sprint_name = sprint.get("name", "")
         try:
@@ -231,21 +323,33 @@ class ConfigPage(QWidget):
         existing_names = {m.name for m in cfg.team_members}
         for name in jira_service.assignees_in_payload(payload):
             if name not in existing_names:
-                cfg.team_members.append(TeamMember(name=name, role="Developer", included=True))
+                cfg.team_members.append(
+                    TeamMember(name=name, role="Developer", included=True)
+                )
 
-        # Keep people who have no tickets this sprint (e.g. full leave) via the
-        # board roster from the last saved config for this board.
-        board_id = int(getattr(self.settings, "last_board_id", 0) or 0)
         roster = config_io.load_board_roster(configs_dir(), board_id)
         if not roster:
             roster = config_io.load_recent_team_fallback(configs_dir())
         if roster:
             cfg.team_members = config_io.merge_team_members(cfg.team_members, roster)
+        return cfg
 
-        self.set_config(cfg)
-
-        # Store the raw sprint dict for use in subtitle/display
+    def populate_from_payload(
+        self, payload: dict, sprint: dict, board_id: int | None = None
+    ) -> None:
+        """Legacy single-sprint populate (also used when seeding a slot)."""
+        log.info("ConfigPage.populate_from_payload: sprint=%s", sprint.get("name"))
+        bid = int(board_id if board_id is not None else getattr(self.settings, "last_board_id", 0) or 0)
+        self._board_id = bid
+        self.payload = payload
         self._last_sprint_meta = sprint
+        self.subtitle.setText(
+            f"Sprint loaded: <b>{sprint.get('name', '')}</b> "
+            f"({(sprint.get('startDate') or '')[:10]} → {(sprint.get('endDate') or '')[:10]}) — "
+            f"{len(payload.get('issues', []))} issues."
+        )
+        cfg = self.build_config_from_payload(payload, sprint, bid)
+        self.set_config(cfg)
 
     def set_config(self, cfg: SprintConfig) -> None:
         log.info("ConfigPage.set_config: %d members, %d leaves, %d exclusions",
@@ -351,14 +455,16 @@ class ConfigPage(QWidget):
             return
         path = configs_dir() / f"{cfg.sprint_name.replace(' ', '_')}.json"
         config_io.save_json(cfg, path)
-        board_id = int(getattr(self.settings, "last_board_id", 0) or 0)
+        board_id = self._board_id or int(getattr(self.settings, "last_board_id", 0) or 0)
         config_io.save_board_roster(configs_dir(), board_id, cfg.team_members)
+        if 0 <= self._active_index < len(self._pack):
+            self._pack.slots[self._active_index].config = cfg
         QMessageBox.information(self, "Saved", f"Configuration saved to:\n{path}")
 
     def _persist_board_roster(self, cfg: SprintConfig | None = None) -> None:
         """Update the board roster so future sprints keep people with no tickets."""
         cfg = cfg or self.gather_config()
-        board_id = int(getattr(self.settings, "last_board_id", 0) or 0)
+        board_id = self._board_id or int(getattr(self.settings, "last_board_id", 0) or 0)
         if board_id and cfg.team_members:
             config_io.save_board_roster(configs_dir(), board_id, cfg.team_members)
 
@@ -392,22 +498,45 @@ class ConfigPage(QWidget):
         QMessageBox.information(self, "Exported", f"Wrote markdown to:\n{path}")
 
     def _on_next(self) -> None:
-        cfg = self.gather_config()
-        if not cfg.sprint_name:
-            QMessageBox.warning(self, "Missing name", "Sprint name is required.")
+        if len(self._pack) == 0:
+            QMessageBox.warning(
+                self,
+                "Empty pack",
+                "Add at least one sprint on the Sprint tab before generating.",
+            )
             return
-        if not self.payload:
-            QMessageBox.warning(self, "No sprint data",
-                                "Load a sprint from the Sprint tab before generating.")
-            return
-        # Auto-save sprint config + board roster (keeps leave-only people next sprint)
-        try:
-            config_io.save_json(cfg, configs_dir() / f"{cfg.sprint_name.replace(' ', '_')}.json")
-            self._persist_board_roster(cfg)
-        except Exception:  # noqa: BLE001
-            pass
-        self.config = cfg
-        self.config_ready.emit(cfg)
+        self.flush_active()
+        for i, slot in enumerate(self._pack.slots):
+            self.ensure_slot_config(slot)
+            if not slot.config or not slot.config.sprint_name:
+                QMessageBox.warning(
+                    self,
+                    "Missing name",
+                    f"Sprint name is required for pack member {i + 1}: {slot.label}",
+                )
+                self.bind_pack(self._pack, active_index=i)
+                return
+            if not slot.payload:
+                QMessageBox.warning(
+                    self,
+                    "No sprint data",
+                    f"Missing Jira data for {slot.label}. Re-add it on the Sprint tab.",
+                )
+                return
+            try:
+                cfg = slot.config
+                config_io.save_json(
+                    cfg, configs_dir() / f"{cfg.sprint_name.replace(' ', '_')}.json"
+                )
+                if slot.board_id and cfg.team_members:
+                    config_io.save_board_roster(
+                        configs_dir(), slot.board_id, cfg.team_members
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+        self.config = self._pack.slots[self._active_index].config
+        self.payload = self._pack.slots[self._active_index].payload
+        self.config_ready.emit()
 
 
 def _to_float(v) -> float:

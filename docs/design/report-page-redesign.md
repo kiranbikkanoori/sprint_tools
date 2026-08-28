@@ -173,12 +173,25 @@ Full Story/Task list (excluded tickets dropped).
 
 ---
 
+## Multi-team presenter pack (v1)
+
+Sprint owns the pack:
+
+- Primary action **Add sprint** (first member and every later one).
+- Pack list on Sprint (remove; order = add order). Same board+sprint replaces.
+- Configure edits one active member at a time (pack combo); Generate runs the whole pack.
+- Each Generate tab stacks **header band** (`board · sprint`) + that team’s existing widgets.
+- Separate tables only — no mega-table Sprint column, **no org rollup totals**.
+- Export: one MD/HTML set **per slot** (existing naming). Combined director HTML / SUMMARY later.
+
 ## Explicit non-goals (this redesign)
 
-- Multi-team / director pack (later)
+- Combined multi-team HTML/MD or SUMMARY rollup (later)
+- Org-level chips / totals
 - Point-in-time status as of sprint end (document caveat only for now)
 - Bar charts / Chart tab
 - In-app Stories | Tasks mode toggles (export keeps two tables)
+- Saved named packs / drag reorder / PPT export
 
 ---
 

@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Slot
 from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config_parser import SprintConfig
+from gui.pack_model import ReportPack
 from gui.report_view_model import ReportViewModel
 from gui.settings import AppSettings, output_dir_default
 from gui.theme import (
@@ -46,7 +46,7 @@ from gui.theme import (
     ticket_type_chips,
 )
 from gui.widgets.capsule_bar import CapsuleBar
-from gui.workers.jira_workers import GenerateReportWorker, run_worker
+from gui.workers.jira_workers import GeneratePackWorker, run_worker
 
 log = logging.getLogger(__name__)
 
@@ -63,10 +63,12 @@ class GeneratePage(QWidget):
     def __init__(self, settings: AppSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.settings = settings
-        self.config: SprintConfig | None = None
-        self.payload: dict = {}
+        self.pack = ReportPack()
         self.last_outputs: dict[str, Path] = {}
-        self.view_model: ReportViewModel | None = None
+        self.last_html_paths: list[Path] = []
+        self.view_models: list[tuple[str, ReportViewModel]] = []
+        self._ticket_sections: list[tuple[ReportViewModel, QTableWidget]] = []
+        self._styled_tables: list[QTableWidget] = []
 
         title = QLabel("<h2>Generate report</h2>")
 
@@ -123,7 +125,7 @@ class GeneratePage(QWidget):
         self.section_stack.addWidget(self.kpis_page)
 
         self.placeholder = QLabel(
-            "Load a sprint, configure the team, then click <b>Generate</b> "
+            "Add sprint(s) on the Sprint tab, configure the team, then click <b>Generate</b> "
             "to review Overview · Hours · Fix-ups · Tickets · KPIs."
         )
         self.placeholder.setWordWrap(True)
@@ -171,41 +173,64 @@ class GeneratePage(QWidget):
             f'padding:2px 6px; border-radius:3px;"><b>Sub-task ✗</b></span> '
             "· Each day lists ticket keys · click a cell for hours"
         )
-        self.fixups_empty.setStyleSheet(f"color: {c['muted']}; padding: 16px;")
         self.tickets_note.setStyleSheet(f"color: {c['muted']};")
         self.kpis_intro.setStyleSheet(f"color: {c['muted']};")
-        self.completion_note.setStyleSheet(f"color: {c['muted']};")
         self._style_report_tables()
         t = table_style_tokens()
         self.hours_drawer.setStyleSheet(
             f"QTextEdit {{ background: {t['surface']}; color: {t['text']}; "
             f"border: 1px solid {t['border']}; border-radius: 12px; padding: 8px; }}"
         )
-        if self.view_model is not None:
-            self._populate_review(self.view_model)
+        if self.view_models:
+            self._populate_review(self.view_models)
 
     def _style_report_tables(self) -> None:
-        """Apply card-style QSS to Hours / Fix-ups / Tickets / KPIs tables."""
+        """Apply card-style QSS to all report tables currently on screen."""
         qss = report_table_stylesheet()
-        for table in (
-            self.hours_table,
-            self.fixups_table,
-            self.tickets_table,
-            self.kpi_table,
-            self.completion_team_table,
-            self.completion_people_table,
-        ):
-            table.setShowGrid(False)
-            table.setStyleSheet(qss)
-            table.verticalHeader().setVisible(False)
-            table.setFrameShape(QFrame.Shape.NoFrame)
-            hh = table.horizontalHeader()
-            hh.setHighlightSections(False)
-            hh.setDefaultAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-            )
+        for table in self._styled_tables:
+            try:
+                table.setShowGrid(False)
+                table.setStyleSheet(qss)
+                table.verticalHeader().setVisible(False)
+                table.setFrameShape(QFrame.Shape.NoFrame)
+                hh = table.horizontalHeader()
+                hh.setHighlightSections(False)
+                hh.setDefaultAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                )
+            except RuntimeError:
+                pass
+
+    def _register_table(self, table: QTableWidget) -> QTableWidget:
+        self._styled_tables.append(table)
+        qss = report_table_stylesheet()
+        table.setShowGrid(False)
+        table.setStyleSheet(qss)
+        table.verticalHeader().setVisible(False)
+        table.setFrameShape(QFrame.Shape.NoFrame)
+        hh = table.horizontalHeader()
+        hh.setHighlightSections(False)
+        hh.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        return table
 
     # ── section builders ────────────────────────────────────────────────
+
+    def _make_scroll_host(self) -> tuple[QWidget, QVBoxLayout]:
+        outer = QWidget()
+        outer_lay = QVBoxLayout(outer)
+        outer_lay.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        lay = QVBoxLayout(body)
+        lay.setSpacing(16)
+        lay.setContentsMargins(0, 0, 4, 0)
+        scroll.setWidget(body)
+        outer_lay.addWidget(scroll)
+        return outer, lay
 
     def _build_overview(self) -> QWidget:
         w = QWidget()
@@ -216,27 +241,8 @@ class GeneratePage(QWidget):
         )
         self.live_banner.setWordWrap(True)
         lay.addWidget(self.live_banner)
-
-        self.chips_host = QWidget()
-        self.chips_grid = QGridLayout(self.chips_host)
-        self.chips_grid.setContentsMargins(0, 0, 0, 0)
-        self.chips_grid.setHorizontalSpacing(10)
-        self.chips_grid.setVerticalSpacing(10)
-        lay.addWidget(self.chips_host)
-
-        self.fixup_link = QLabel("")
-        self.fixup_link.setTextFormat(Qt.TextFormat.RichText)
-        self.fixup_link.linkActivated.connect(lambda _u: self._show_section(_TAB_FIXUPS))
-        lay.addWidget(self.fixup_link)
-
-        goal_label = QLabel("Sprint goal")
-        goal_label.setStyleSheet("font-weight: 600;")
-        lay.addWidget(goal_label)
-        self.goal_edit = QTextEdit()
-        self.goal_edit.setReadOnly(True)
-        self.goal_edit.setMaximumHeight(160)
-        lay.addWidget(self.goal_edit)
-        lay.addStretch(1)
+        host, self.overview_sections = self._make_scroll_host()
+        lay.addWidget(host, stretch=1)
         return w
 
     def _build_hours(self) -> QWidget:
@@ -248,12 +254,8 @@ class GeneratePage(QWidget):
         lay.addWidget(self.hours_legend)
 
         split = QSplitter(Qt.Orientation.Horizontal)
-        self.hours_table = QTableWidget()
-        self.hours_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.hours_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        self.hours_table.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.hours_table.cellClicked.connect(self._on_hours_cell)
-        split.addWidget(self.hours_table)
+        host, self.hours_sections = self._make_scroll_host()
+        split.addWidget(host)
 
         self.hours_drawer = QTextEdit()
         self.hours_drawer.setReadOnly(True)
@@ -268,21 +270,8 @@ class GeneratePage(QWidget):
     def _build_fixups(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        self.fixups_empty = QLabel("")
-        self.fixups_empty.setWordWrap(True)
-        self.fixups_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.fixups_empty)
-
-        self.fixups_table = QTableWidget()
-        self.fixups_table.setColumnCount(6)
-        self.fixups_table.setHorizontalHeaderLabels(
-            ["Severity", "Type", "Key", "Person", "Summary", "Why / what to do"]
-        )
-        self.fixups_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.fixups_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.fixups_table.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.fixups_table.setWordWrap(False)
-        lay.addWidget(self.fixups_table, stretch=1)
+        host, self.fixups_sections = self._make_scroll_host()
+        lay.addWidget(host, stretch=1)
 
         jump = QHBoxLayout()
         for label, idx in (
@@ -326,17 +315,8 @@ class GeneratePage(QWidget):
         filt.addStretch(1)
         lay.addLayout(filt)
 
-        self.tickets_table = QTableWidget()
-        self.tickets_table.setColumnCount(8)
-        self.tickets_table.setHorizontalHeaderLabels(
-            ["Key", "Summary", "Type", "Assignee", "Status", "Estimate (h)", "Remaining (h)", "SP"]
-        )
-        self.tickets_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tickets_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tickets_table.setSortingEnabled(True)
-        self.tickets_table.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.tickets_table.setWordWrap(False)
-        lay.addWidget(self.tickets_table, stretch=1)
+        host, self.tickets_sections = self._make_scroll_host()
+        lay.addWidget(host, stretch=1)
 
         for wdg in (self.ticket_status, self.ticket_assignee, self.ticket_type):
             wdg.currentIndexChanged.connect(self._apply_ticket_filters)
@@ -344,95 +324,36 @@ class GeneratePage(QWidget):
         return w
 
     def _build_kpis(self) -> QWidget:
-        outer = QWidget()
-        outer_lay = QVBoxLayout(outer)
-        outer_lay.setContentsMargins(0, 0, 0, 0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        body = QWidget()
-        lay = QVBoxLayout(body)
-        lay.setSpacing(12)
-
+        outer, self.kpis_sections = self._make_scroll_host()
+        # intro sits above sections via a wrapper
+        wrap = QWidget()
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(0, 0, 0, 0)
         self.kpis_intro = QLabel(
             "Same Sprint KPI Summary and Completion & Velocity tables as the exported report."
         )
         self.kpis_intro.setWordWrap(True)
         lay.addWidget(self.kpis_intro)
-
-        kpi_title = QLabel("<b>Sprint KPI Summary</b>")
-        lay.addWidget(kpi_title)
-        self.kpi_table = QTableWidget()
-        self.kpi_table.setColumnCount(3)
-        self.kpi_table.setHorizontalHeaderLabels(["KPI", "Value", "Notes"])
-        self.kpi_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch
-        )
-        self.kpi_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.kpi_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.kpi_table.verticalHeader().setVisible(False)
-        lay.addWidget(self.kpi_table)
-
-        cv_title = QLabel("<b>Sprint Completion &amp; Velocity</b>")
-        lay.addWidget(cv_title)
-        self.completion_note = QLabel(
-            "Completion — Stories + Tasks done (Done/Complete category, or Resolved). "
-            "Target ≥ 90%. Velocity — story points delivered ÷ effective person-days."
-        )
-        self.completion_note.setWordWrap(True)
-        lay.addWidget(self.completion_note)
-
-        team_title = QLabel("Team")
-        team_title.setStyleSheet("font-weight: 600;")
-        lay.addWidget(team_title)
-        self.completion_team_table = QTableWidget()
-        self.completion_team_table.setColumnCount(3)
-        self.completion_team_table.setHorizontalHeaderLabels(["Metric", "Value", "Target"])
-        self.completion_team_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        self.completion_team_table.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-        self.completion_team_table.verticalHeader().setVisible(False)
-        lay.addWidget(self.completion_team_table)
-
-        person_title = QLabel("Per-person")
-        person_title.setStyleSheet("font-weight: 600;")
-        lay.addWidget(person_title)
-        self.completion_people_table = QTableWidget()
-        self.completion_people_table.setColumnCount(6)
-        self.completion_people_table.setHorizontalHeaderLabels(
-            [
-                "Person",
-                "Tickets done / committed",
-                "Tickets %",
-                "SP delivered / committed",
-                "SP %",
-                "SP / person-day",
-            ]
-        )
-        self.completion_people_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.completion_people_table.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-        self.completion_people_table.setSortingEnabled(True)
-        self.completion_people_table.verticalHeader().setVisible(False)
-        lay.addWidget(self.completion_people_table)
-        lay.addStretch(1)
-
-        scroll.setWidget(body)
-        outer_lay.addWidget(scroll)
-        return outer
+        lay.addWidget(outer, stretch=1)
+        return wrap
 
     # ── public ──────────────────────────────────────────────────────────
 
-    def set_inputs(self, config: SprintConfig, payload: dict) -> None:
-        self.config = config
-        self.payload = payload
+    def set_pack(self, pack: ReportPack) -> None:
+        self.pack = pack
+
+    def set_inputs(self, config, payload: dict) -> None:
+        """Backward-compatible single-sprint entry (wraps as a one-slot pack)."""
+        from gui.pack_model import PackSlot
+
+        slot = PackSlot(
+            board_id=int(getattr(self.settings, "last_board_id", 0) or 0),
+            board_name=str(getattr(self.settings, "last_board_name", "") or ""),
+            sprint={"name": getattr(config, "sprint_name", "")},
+            payload=payload,
+            config=config,
+        )
+        self.pack = ReportPack(slots=[slot])
 
     # ── handlers ────────────────────────────────────────────────────────
 
@@ -450,66 +371,101 @@ class GeneratePage(QWidget):
         self.generate_btn.setEnabled(not busy)
 
     def _generate(self) -> None:
-        if not self.config or not self.payload:
+        if len(self.pack) == 0:
             QMessageBox.warning(
-                self, "Nothing to generate", "Load a sprint and configure it first."
+                self, "Nothing to generate", "Add a sprint and configure it first."
             )
             return
+        entries = []
+        for slot in self.pack.slots:
+            if slot.config is None or not slot.payload:
+                QMessageBox.warning(
+                    self,
+                    "Incomplete pack",
+                    f"Configure {slot.label} before generating.",
+                )
+                return
+            entries.append((slot.label, slot.config, slot.payload))
+
         out_dir = Path(self.settings.output_dir or output_dir_default())
-        self._busy("Generating…", True)
-        worker = GenerateReportWorker(
-            self.config,
-            self.payload,
+        self._busy(f"Generating 1/{len(entries)}…", True)
+        worker = GeneratePackWorker(
+            entries,
             out_dir,
             make_report=self.cb_report.isChecked(),
             make_chart=False,
         )
-
-        def _progress(msg, cur, total):
-            self.progress_label.setText(msg)
-            if total > 0:
-                self.progress_bar.setRange(0, total)
-                self.progress_bar.setValue(cur)
-            else:
-                self.progress_bar.setRange(0, 0)
-
-        worker.progress.connect(_progress)
-        worker.failed.connect(self._on_failed)
-        worker.finished.connect(self._on_finished)
+        # Must be QueuedConnection: nested callables are DirectConnection and
+        # crash if they touch widgets from the worker thread (QPainter segfault).
+        worker.progress.connect(
+            self._on_generate_progress, Qt.ConnectionType.QueuedConnection
+        )
+        worker.failed.connect(self._on_failed, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(self._on_finished, Qt.ConnectionType.QueuedConnection)
         run_worker(worker, self)
 
+    @Slot(str, int, int)
+    def _on_generate_progress(self, msg: str, cur: int, total: int) -> None:
+        self.progress_label.setText(msg)
+        if total > 0:
+            self.progress_bar.setRange(0, total)
+            self.progress_bar.setValue(cur)
+        else:
+            self.progress_bar.setRange(0, 0)
+
+    @Slot(str)
     def _on_failed(self, msg: str) -> None:
         self._busy("", False)
         QMessageBox.critical(self, "Generation failed", msg)
 
-    def _on_finished(self, written: dict) -> None:
+    @Slot(object)
+    def _on_finished(self, results) -> None:
         self._busy("", False)
-        written = written or {}
-        self.view_model = written.pop("view_model", None)
-        self.last_outputs = {k: Path(v) for k, v in written.items() if v is not None}
-        self.open_folder_btn.setEnabled(bool(self.last_outputs))
-        self.open_html_btn.setEnabled("report_html" in self.last_outputs)
+        results = results or []
+        self.view_models = []
+        self.last_html_paths = []
+        self.last_outputs = {}
+        for written in results:
+            written = dict(written or {})
+            label = str(written.pop("label", "") or "Sprint")
+            vm = written.pop("view_model", None)
+            if vm is not None:
+                self.view_models.append((label, vm))
+            for k, v in written.items():
+                if v is None:
+                    continue
+                path = Path(v)
+                self.last_outputs[f"{label}:{k}"] = path
+                if k == "report_html":
+                    self.last_html_paths.append(path)
+        if self.last_html_paths:
+            self.last_outputs["report_html"] = self.last_html_paths[0]
 
-        if self.view_model is not None:
-            self._populate_review(self.view_model)
+        self.open_folder_btn.setEnabled(bool(self.last_outputs))
+        self.open_html_btn.setEnabled(bool(self.last_html_paths))
+
+        if self.view_models:
+            self._populate_review(self.view_models)
             self.review_host.setCurrentIndex(1)
-            if self.view_model.default_tab == "fixups":
+            any_fixups = any(vm.fixup_count > 0 for _, vm in self.view_models)
+            if any_fixups:
                 self._show_section(_TAB_FIXUPS)
             else:
                 self._show_section(_TAB_OVERVIEW)
         else:
             self.review_host.setCurrentIndex(0)
 
-        msg = "Done."
-        if "report_html" in self.last_outputs:
-            msg += f"\n\nHTML report: {self.last_outputs['report_html']}"
-        if "report" in self.last_outputs:
-            msg += f"\nMarkdown : {self.last_outputs['report']}"
+        msg = f"Done — {len(self.view_models)} sprint report(s)."
+        for p in self.last_html_paths:
+            msg += f"\n\nHTML: {p}"
         QMessageBox.information(self, "Generated", msg)
 
     def _open_html_report(self) -> None:
-        path = self.last_outputs.get("report_html")
-        if not path or not path.is_file():
+        if not self.last_html_paths:
+            QMessageBox.information(self, "No HTML report", "Generate a report first.")
+            return
+        path = self.last_html_paths[0]
+        if not path.is_file():
             QMessageBox.information(self, "No HTML report", "Generate a report first.")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
@@ -530,22 +486,77 @@ class GeneratePage(QWidget):
         self.section_nav.set_current(index)
         self.section_stack.setCurrentIndex(index)
 
+    # ── helpers ─────────────────────────────────────────────────────────
+
+    def _clear_layout(self, lay: QVBoxLayout) -> None:
+        while lay.count():
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _section_header(self, label: str) -> QFrame:
+        t = table_style_tokens()
+        band = QFrame()
+        band.setObjectName("packSectionHeader")
+        band.setStyleSheet(
+            f"QFrame#packSectionHeader {{ background: {t['header_bg']}; "
+            f"border: 1px solid {t['border']}; border-radius: 10px; }}"
+        )
+        row = QHBoxLayout(band)
+        row.setContentsMargins(14, 10, 14, 10)
+        lab = QLabel(label)
+        lab.setStyleSheet(
+            f"font-size: 15px; font-weight: 700; color: {t['header_fg']}; "
+            f"background: transparent; border: none;"
+        )
+        row.addWidget(lab)
+        row.addStretch(1)
+        return band
+
     # ── populate tabs ───────────────────────────────────────────────────
 
-    def _populate_review(self, vm: ReportViewModel) -> None:
-        self._populate_overview(vm)
-        self._populate_hours(vm)
-        self._populate_fixups(vm)
-        self._populate_tickets(vm)
-        self._populate_kpis(vm)
-        n = vm.fixup_count
-        self.section_nav.set_label(_TAB_FIXUPS, f"Fix-ups ({n})" if n else "Fix-ups")
+    def _populate_review(self, items: list[tuple[str, ReportViewModel]]) -> None:
+        self._styled_tables = []
+        self._ticket_sections = []
+        self._clear_layout(self.overview_sections)
+        self._clear_layout(self.hours_sections)
+        self._clear_layout(self.fixups_sections)
+        self._clear_layout(self.tickets_sections)
+        self._clear_layout(self.kpis_sections)
 
-    def _populate_overview(self, vm: ReportViewModel) -> None:
-        while self.chips_grid.count():
-            item = self.chips_grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        for label, vm in items:
+            self._add_overview_section(label, vm)
+            self._add_hours_section(label, vm)
+            self._add_fixups_section(label, vm)
+            self._add_tickets_section(label, vm)
+            self._add_kpis_section(label, vm)
+
+        self._refresh_ticket_filter_options()
+        self._apply_ticket_filters()
+
+        total_fixups = sum(vm.fixup_count for _, vm in items)
+        self.section_nav.set_label(
+            _TAB_FIXUPS, f"Fix-ups ({total_fixups})" if total_fixups else "Fix-ups"
+        )
+        self.overview_sections.addStretch(1)
+        self.hours_sections.addStretch(1)
+        self.fixups_sections.addStretch(1)
+        self.tickets_sections.addStretch(1)
+        self.kpis_sections.addStretch(1)
+
+    def _add_overview_section(self, label: str, vm: ReportViewModel) -> None:
+        section = QWidget()
+        lay = QVBoxLayout(section)
+        lay.setContentsMargins(0, 0, 0, 8)
+        lay.setSpacing(10)
+        lay.addWidget(self._section_header(label))
+
+        chips_host = QWidget()
+        chips_grid = QGridLayout(chips_host)
+        chips_grid.setContentsMargins(0, 0, 0, 0)
+        chips_grid.setHorizontalSpacing(10)
+        chips_grid.setVerticalSpacing(10)
         for i, chip in enumerate(vm.chips):
             cs = overview_chip_style(chip.label)
             frame = QFrame()
@@ -586,20 +597,33 @@ class GeneratePage(QWidget):
                 detail.setStyleSheet(f"font-size: 12px; color: {cs['detail']};")
                 fl.addWidget(detail)
             row.addWidget(content, stretch=1)
-            self.chips_grid.addWidget(frame, i // 4, i % 4)
+            chips_grid.addWidget(frame, i // 4, i % 4)
+        lay.addWidget(chips_host)
 
+        fixup_link = QLabel("")
+        fixup_link.setTextFormat(Qt.TextFormat.RichText)
+        fixup_link.linkActivated.connect(lambda _u: self._show_section(_TAB_FIXUPS))
         if vm.fixup_count:
-            self.fixup_link.setText(
+            fixup_link.setText(
                 f'<a href="#fixups">{vm.fixup_count} fix-up(s)</a> — open Fix-ups tab'
             )
         else:
-            self.fixup_link.setText("No fix-ups — sprint looks clean on exception checks.")
-        self.goal_edit.setPlainText(vm.sprint_goal or "(No sprint goal set in Jira.)")
+            fixup_link.setText("No fix-ups — sprint looks clean on exception checks.")
+        lay.addWidget(fixup_link)
+
+        goal_label = QLabel("Sprint goal")
+        goal_label.setStyleSheet("font-weight: 600;")
+        lay.addWidget(goal_label)
+        goal_edit = QTextEdit()
+        goal_edit.setReadOnly(True)
+        goal_edit.setMaximumHeight(120)
+        goal_edit.setPlainText(vm.sprint_goal or "(No sprint goal set in Jira.)")
+        lay.addWidget(goal_edit)
+        self.overview_sections.addWidget(section)
 
     def _ticket_entries_for_day(
         self, detail: dict[str, dict[str, float]]
     ) -> list[tuple[str, str, float]]:
-        """Flatten day ticket map → (key, bucket, hours) sorted by hours desc."""
         entries: list[tuple[str, str, float]] = []
         for bucket in ("story", "task", "subtask"):
             for key, hrs in (detail.get(bucket) or {}).items():
@@ -616,12 +640,10 @@ class GeneratePage(QWidget):
         mins: dict[int, int] | None = None,
         slack: int = 20,
     ) -> None:
-        """Size columns from content + header text so labels are not ellipsized."""
         stretch = stretch or []
         mins = mins or {}
         header = table.horizontalHeader()
         header.setMinimumSectionSize(48)
-        # Measure with a slightly bold font (headers / keys are often semibold).
         measure = QFont(table.font())
         measure.setWeight(QFont.Weight.DemiBold)
         fm = QFontMetrics(measure)
@@ -637,7 +659,6 @@ class GeneratePage(QWidget):
             content_w = table.columnWidth(c)
             hdr_item = table.horizontalHeaderItem(c)
             hdr_w = fm.boundingRect(hdr_item.text()).width() + 32 if hdr_item else 0
-            # Scan cell text for longest value (ResizeToContents can undersize bold keys).
             longest = hdr_w
             for r in range(table.rowCount()):
                 item = table.item(r, c)
@@ -680,7 +701,6 @@ class GeneratePage(QWidget):
             chip.setFont(chip_font)
             chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
             chip.setToolTip(f"{hrs:.1f}h · {bucket}")
-            # Size from bold metrics so first/last glyphs are not clipped (same as capsules).
             text_w = fm.boundingRect(key).width()
             chip.setMinimumWidth(text_w + 18)
             chip.setMinimumHeight(fm.height() + 10)
@@ -700,24 +720,37 @@ class GeneratePage(QWidget):
             lay.addWidget(more)
         return host
 
-    def _populate_hours(self, vm: ReportViewModel) -> None:
+    def _add_hours_section(self, label: str, vm: ReportViewModel) -> None:
+        section = QWidget()
+        lay = QVBoxLayout(section)
+        lay.setContentsMargins(0, 0, 0, 8)
+        lay.setSpacing(8)
+        lay.addWidget(self._section_header(label))
+
+        table = self._register_table(QTableWidget())
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        table.cellClicked.connect(
+            lambda r, c, v=vm: self._on_hours_cell(r, c, v)
+        )
+
         dates = vm.display_dates
-        cols = 1 + len(dates) + 3  # person + days + logged + rem + cap
-        self.hours_table.clear()
-        self.hours_table.setRowCount(len(vm.hours_rows) + 1)
-        self.hours_table.setColumnCount(cols)
+        cols = 1 + len(dates) + 3
+        table.setRowCount(len(vm.hours_rows) + 1)
+        table.setColumnCount(cols)
         headers = ["Person"] + [d.strftime("%b %d") for d in dates] + [
             "Logged (h)",
             "Remaining (h)",
             "Capacity (h)",
         ]
-        self.hours_table.setHorizontalHeaderLabels(headers)
+        table.setHorizontalHeaderLabels(headers)
 
         team_logged = team_rem = team_cap = 0.0
         team_day = [0.0] * len(dates)
 
         for r_i, row in enumerate(vm.hours_rows):
-            self.hours_table.setItem(r_i, 0, QTableWidgetItem(row.name))
+            table.setItem(r_i, 0, QTableWidgetItem(row.name))
             row_max = 1
             for c_i, d in enumerate(dates):
                 cell = row.days.get(d)
@@ -732,16 +765,11 @@ class GeneratePage(QWidget):
                     n_vis += 1
                 row_max = max(row_max, n_vis)
                 wdg = self._make_day_cell_widget(entries, s + t + x)
-                self.hours_table.setCellWidget(r_i, 1 + c_i, wdg)
-            self.hours_table.setItem(r_i, 1 + len(dates), QTableWidgetItem(f"{row.logged:.1f}"))
-            self.hours_table.setItem(
-                r_i, 2 + len(dates), QTableWidgetItem(f"{row.remaining:.1f}")
-            )
-            self.hours_table.setItem(
-                r_i, 3 + len(dates), QTableWidgetItem(f"{row.capacity:.1f}")
-            )
-            # Chip height ~ fm.height+10 + spacing; leave room so glyphs are not clipped.
-            self.hours_table.setRowHeight(r_i, max(44, 12 + row_max * 28))
+                table.setCellWidget(r_i, 1 + c_i, wdg)
+            table.setItem(r_i, 1 + len(dates), QTableWidgetItem(f"{row.logged:.1f}"))
+            table.setItem(r_i, 2 + len(dates), QTableWidgetItem(f"{row.remaining:.1f}"))
+            table.setItem(r_i, 3 + len(dates), QTableWidgetItem(f"{row.capacity:.1f}"))
+            table.setRowHeight(r_i, max(44, 12 + row_max * 28))
             team_logged += row.logged
             team_rem += row.remaining
             team_cap += row.capacity
@@ -756,7 +784,7 @@ class GeneratePage(QWidget):
         name_item.setBackground(total_bg)
         name_item.setForeground(total_fg)
         name_item.setFont(bold)
-        self.hours_table.setItem(tot, 0, name_item)
+        table.setItem(tot, 0, name_item)
         for c_i, v in enumerate(team_day):
             item = QTableWidgetItem(f"{v:.1f}")
             item.setBackground(total_bg)
@@ -765,7 +793,7 @@ class GeneratePage(QWidget):
             item.setTextAlignment(
                 int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             )
-            self.hours_table.setItem(tot, 1 + c_i, item)
+            table.setItem(tot, 1 + c_i, item)
         for col, val in (
             (1 + len(dates), team_logged),
             (2 + len(dates), team_rem),
@@ -778,23 +806,22 @@ class GeneratePage(QWidget):
             item.setTextAlignment(
                 int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             )
-            self.hours_table.setItem(tot, col, item)
-        # Style numeric columns on person rows
+            table.setItem(tot, col, item)
         for r_i, row in enumerate(vm.hours_rows):
             for col in (1 + len(dates), 2 + len(dates), 3 + len(dates)):
-                it = self.hours_table.item(r_i, col)
+                it = table.item(r_i, col)
                 if it is not None:
                     it.setTextAlignment(
                         int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     )
-            name_it = self.hours_table.item(r_i, 0)
+            name_it = table.item(r_i, 0)
             if name_it is not None:
                 font = QFont()
                 font.setBold(True)
                 name_it.setFont(font)
         n_dates = len(dates)
         self._fit_table_columns(
-            self.hours_table,
+            table,
             stretch=[],
             mins={
                 **{1 + i: 128 for i in range(n_dates)},
@@ -805,11 +832,13 @@ class GeneratePage(QWidget):
             },
             slack=16,
         )
-        self.hours_drawer.clear()
+        # Give the table a sensible vertical size for scroll stacking.
+        table.setMinimumHeight(min(420, 56 + table.rowCount() * 48))
+        lay.addWidget(table)
+        self.hours_sections.addWidget(section)
 
-    def _on_hours_cell(self, row: int, col: int) -> None:
-        vm = self.view_model
-        if vm is None or row < 0 or row >= len(vm.hours_rows):
+    def _on_hours_cell(self, row: int, col: int, vm: ReportViewModel) -> None:
+        if row < 0 or row >= len(vm.hours_rows):
             return
         dates = vm.display_dates
         if col < 1 or col > len(dates):
@@ -835,56 +864,7 @@ class GeneratePage(QWidget):
             lines.append("(No ticket-level hours this day.)")
         self.hours_drawer.setPlainText("\n".join(lines))
 
-    def _populate_fixups(self, vm: ReportViewModel) -> None:
-        empty = vm.fixup_count == 0
-        self.fixups_empty.setVisible(empty)
-        self.fixups_table.setVisible(not empty)
-        if empty:
-            self.fixups_empty.setTextFormat(Qt.TextFormat.RichText)
-            self.fixups_empty.setText(
-                "<b>No fix-ups — sprint looks clean.</b><br>"
-                "Use Overview for the scorecard, KPIs for the full tables, "
-                "Hours for load, Tickets for the full list."
-            )
-            self.fixups_table.setRowCount(0)
-            return
-        self.fixups_table.setRowCount(len(vm.fixups))
-        t = table_style_tokens()
-        key_fg = QColor(t["key_fg"])
-        muted = QColor(t["muted"])
-        for i, f in enumerate(vm.fixups):
-            pill = self._severity_pill(f.severity)
-            self.fixups_table.setCellWidget(i, 0, pill)
-            sev_item = QTableWidgetItem(f.severity)
-            sev_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            # Keep text for accessibility / copy; pill covers the cell visually.
-            sev_item.setForeground(QColor(0, 0, 0, 0))
-            self.fixups_table.setItem(i, 0, sev_item)
-            type_item = QTableWidgetItem(f.type_label)
-            key_item = QTableWidgetItem(f.key)
-            key_item.setForeground(key_fg)
-            font = QFont()
-            font.setBold(True)
-            key_item.setFont(font)
-            person_item = QTableWidgetItem(f.person)
-            summary_item = QTableWidgetItem(f.summary)
-            action_item = QTableWidgetItem(f.action)
-            action_item.setForeground(muted)
-            self.fixups_table.setItem(i, 1, type_item)
-            self.fixups_table.setItem(i, 2, key_item)
-            self.fixups_table.setItem(i, 3, person_item)
-            self.fixups_table.setItem(i, 4, summary_item)
-            self.fixups_table.setItem(i, 5, action_item)
-            self.fixups_table.setRowHeight(i, 44)
-        self._fit_table_columns(
-            self.fixups_table,
-            stretch=[4, 5],
-            mins={0: 88, 1: 140, 2: 120, 3: 100},
-            slack=18,
-        )
-
     def _severity_pill(self, severity: str) -> QWidget:
-        """Soft severity pill for Fix-ups (theme-aware)."""
         t = table_style_tokens()
         sev = (severity or "").strip() or "—"
         if sev == "High":
@@ -916,49 +896,129 @@ class GeneratePage(QWidget):
         host.setMinimumHeight(fm.height() + 18)
         return host
 
-    def _populate_tickets(self, vm: ReportViewModel) -> None:
-        statuses = sorted({t.status for t in vm.tickets})
-        assignees = sorted({t.assignee for t in vm.tickets})
+    def _add_fixups_section(self, label: str, vm: ReportViewModel) -> None:
+        c = theme_colors()
+        section = QWidget()
+        lay = QVBoxLayout(section)
+        lay.setContentsMargins(0, 0, 0, 8)
+        lay.setSpacing(8)
+        lay.addWidget(self._section_header(label))
+
+        if vm.fixup_count == 0:
+            empty = QLabel(
+                "<b>No fix-ups — sprint looks clean.</b><br>"
+                "Use Overview for the scorecard, KPIs for the full tables, "
+                "Hours for load, Tickets for the full list."
+            )
+            empty.setTextFormat(Qt.TextFormat.RichText)
+            empty.setWordWrap(True)
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setStyleSheet(f"color: {c['muted']}; padding: 16px;")
+            lay.addWidget(empty)
+            self.fixups_sections.addWidget(section)
+            return
+
+        table = self._register_table(QTableWidget())
+        table.setColumnCount(6)
+        table.setHorizontalHeaderLabels(
+            ["Severity", "Type", "Key", "Person", "Summary", "Why / what to do"]
+        )
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        table.setWordWrap(False)
+        table.setRowCount(len(vm.fixups))
+        t = table_style_tokens()
+        key_fg = QColor(t["key_fg"])
+        muted = QColor(t["muted"])
+        for i, f in enumerate(vm.fixups):
+            pill = self._severity_pill(f.severity)
+            table.setCellWidget(i, 0, pill)
+            sev_item = QTableWidgetItem(f.severity)
+            sev_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            sev_item.setForeground(QColor(0, 0, 0, 0))
+            table.setItem(i, 0, sev_item)
+            type_item = QTableWidgetItem(f.type_label)
+            key_item = QTableWidgetItem(f.key)
+            key_item.setForeground(key_fg)
+            font = QFont()
+            font.setBold(True)
+            key_item.setFont(font)
+            person_item = QTableWidgetItem(f.person)
+            summary_item = QTableWidgetItem(f.summary)
+            action_item = QTableWidgetItem(f.action)
+            action_item.setForeground(muted)
+            table.setItem(i, 1, type_item)
+            table.setItem(i, 2, key_item)
+            table.setItem(i, 3, person_item)
+            table.setItem(i, 4, summary_item)
+            table.setItem(i, 5, action_item)
+            table.setRowHeight(i, 44)
+        self._fit_table_columns(
+            table,
+            stretch=[4, 5],
+            mins={0: 88, 1: 140, 2: 120, 3: 100},
+            slack=18,
+        )
+        table.setMinimumHeight(min(360, 48 + table.rowCount() * 48))
+        lay.addWidget(table)
+        self.fixups_sections.addWidget(section)
+
+    def _add_tickets_section(self, label: str, vm: ReportViewModel) -> None:
+        section = QWidget()
+        lay = QVBoxLayout(section)
+        lay.setContentsMargins(0, 0, 0, 8)
+        lay.setSpacing(8)
+        lay.addWidget(self._section_header(label))
+
+        table = self._register_table(QTableWidget())
+        table.setColumnCount(8)
+        table.setHorizontalHeaderLabels(
+            ["Key", "Summary", "Type", "Assignee", "Status", "Estimate (h)", "Remaining (h)", "SP"]
+        )
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSortingEnabled(True)
+        table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        table.setWordWrap(False)
+        table.setMinimumHeight(240)
+        lay.addWidget(table)
+        self._ticket_sections.append((vm, table))
+        self.tickets_sections.addWidget(section)
+
+    def _refresh_ticket_filter_options(self) -> None:
+        statuses: set[str] = set()
+        assignees: set[str] = set()
+        for vm, _ in self._ticket_sections:
+            statuses.update(t.status for t in vm.tickets)
+            assignees.update(t.assignee for t in vm.tickets)
         self.ticket_status.blockSignals(True)
         self.ticket_assignee.blockSignals(True)
+        cur_st = self.ticket_status.currentData() or ""
+        cur_asg = self.ticket_assignee.currentData() or ""
         self.ticket_status.clear()
         self.ticket_status.addItem("All", "")
-        for s in statuses:
+        for s in sorted(statuses):
             self.ticket_status.addItem(s, s)
         self.ticket_assignee.clear()
         self.ticket_assignee.addItem("All", "")
-        for a in assignees:
+        for a in sorted(assignees):
             self.ticket_assignee.addItem(a, a)
+        # restore if still present
+        idx = self.ticket_status.findData(cur_st)
+        if idx >= 0:
+            self.ticket_status.setCurrentIndex(idx)
+        idx = self.ticket_assignee.findData(cur_asg)
+        if idx >= 0:
+            self.ticket_assignee.setCurrentIndex(idx)
         self.ticket_status.blockSignals(False)
         self.ticket_assignee.blockSignals(False)
-        self._apply_ticket_filters()
 
     def _apply_ticket_filters(self) -> None:
-        vm = self.view_model
-        if vm is None:
-            return
         st = self.ticket_status.currentData() or ""
         asg = self.ticket_assignee.currentData() or ""
         typ = self.ticket_type.currentData() or ""
         warn_only = self.ticket_warn_only.isChecked()
-
-        rows = []
-        for t in vm.tickets:
-            if st and t.status != st:
-                continue
-            if asg and t.assignee != asg:
-                continue
-            if typ and t.type_ != typ:
-                continue
-            if warn_only and not t.has_warn:
-                continue
-            rows.append(t)
-
-        # Keep not-done first even when sorting is enabled later
-        rows.sort(key=lambda t: (t.is_done, t.status, t.key))
-
-        self.tickets_table.setSortingEnabled(False)
-        self.tickets_table.setRowCount(len(rows))
         t = table_style_tokens()
         warn_bg = QBrush(QColor(t["warn_bg"]))
         warn_fg = QColor(t["warn_fg"])
@@ -967,66 +1027,94 @@ class GeneratePage(QWidget):
         warn_font.setBold(True)
         key_font = QFont()
         key_font.setBold(True)
-        rem_col = 6  # Remaining (h)
-        for i, tick in enumerate(rows):
-            rem = "—" if tick.remaining_hours is None else f"{tick.remaining_hours:.1f}"
-            if tick.has_warn and tick.remaining_hours is not None:
-                rem = f"{tick.remaining_hours:.1f} ⚠"
-            vals = [
-                tick.key,
-                tick.summary,
-                tick.type_,
-                tick.assignee,
-                tick.status,
-                f"{tick.estimate_hours:.1f}",
-                rem,
-                f"{tick.story_points:g}",
-            ]
-            for col, v in enumerate(vals):
-                item = QTableWidgetItem(v)
-                if col == 0:
-                    item.setForeground(key_fg)
-                    item.setFont(key_font)
-                if col in (5, 6, 7):
-                    item.setTextAlignment(
-                        int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                    )
-                if tick.has_warn:
-                    item.setBackground(warn_bg)
-                    if col == rem_col:
-                        item.setForeground(warn_fg)
-                        item.setFont(warn_font)
-                self.tickets_table.setItem(i, col, item)
-        self.tickets_table.setSortingEnabled(True)
-        self._fit_table_columns(
-            self.tickets_table,
-            stretch=[1],
-            mins={
-                0: 120,  # Key
-                2: 72,   # Type
-                3: 110,  # Assignee
-                4: 100,  # Status
-                5: 100,  # Estimate (h)
-                6: 110,  # Remaining (h)
-                7: 48,   # SP
-            },
-            slack=18,
-        )
+        rem_col = 6
 
-    def _populate_kpis(self, vm: ReportViewModel) -> None:
+        for vm, table in self._ticket_sections:
+            rows = []
+            for tick in vm.tickets:
+                if st and tick.status != st:
+                    continue
+                if asg and tick.assignee != asg:
+                    continue
+                if typ and tick.type_ != typ:
+                    continue
+                if warn_only and not tick.has_warn:
+                    continue
+                rows.append(tick)
+            rows.sort(key=lambda x: (x.is_done, x.status, x.key))
+
+            table.setSortingEnabled(False)
+            table.setRowCount(len(rows))
+            for i, tick in enumerate(rows):
+                rem = "—" if tick.remaining_hours is None else f"{tick.remaining_hours:.1f}"
+                if tick.has_warn and tick.remaining_hours is not None:
+                    rem = f"{tick.remaining_hours:.1f} ⚠"
+                vals = [
+                    tick.key,
+                    tick.summary,
+                    tick.type_,
+                    tick.assignee,
+                    tick.status,
+                    f"{tick.estimate_hours:.1f}",
+                    rem,
+                    f"{tick.story_points:g}",
+                ]
+                for col, v in enumerate(vals):
+                    item = QTableWidgetItem(v)
+                    if col == 0:
+                        item.setForeground(key_fg)
+                        item.setFont(key_font)
+                    if col in (5, 6, 7):
+                        item.setTextAlignment(
+                            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                        )
+                    if tick.has_warn:
+                        item.setBackground(warn_bg)
+                        if col == rem_col:
+                            item.setForeground(warn_fg)
+                            item.setFont(warn_font)
+                    table.setItem(i, col, item)
+            table.setSortingEnabled(True)
+            self._fit_table_columns(
+                table,
+                stretch=[1],
+                mins={
+                    0: 120,
+                    2: 72,
+                    3: 110,
+                    4: 100,
+                    5: 100,
+                    6: 110,
+                    7: 48,
+                },
+                slack=18,
+            )
+            table.setMinimumHeight(min(400, 56 + max(1, table.rowCount()) * 36))
+
+    def _add_kpis_section(self, label: str, vm: ReportViewModel) -> None:
+        section = QWidget()
+        lay = QVBoxLayout(section)
+        lay.setContentsMargins(0, 0, 0, 8)
+        lay.setSpacing(10)
+        lay.addWidget(self._section_header(label))
+
         t = table_style_tokens()
         key_fg = QColor(t["key_fg"])
         muted = QColor(t["muted"])
         bold = QFont()
         bold.setBold(True)
+        c = theme_colors()
 
-        # Sprint KPI Summary
-        self.kpi_table.setRowCount(len(vm.kpi_rows))
+        lay.addWidget(QLabel("<b>Sprint KPI Summary</b>"))
+        kpi_table = self._register_table(QTableWidget())
+        kpi_table.setColumnCount(3)
+        kpi_table.setHorizontalHeaderLabels(["KPI", "Value", "Notes"])
+        kpi_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        kpi_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        kpi_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        kpi_table.setRowCount(len(vm.kpi_rows))
         for i, row in enumerate(vm.kpi_rows):
-            emphasize = row.label in (
-                "Sprint completion rate",
-                "Sprint velocity",
-            )
+            emphasize = row.label in ("Sprint completion rate", "Sprint velocity")
             quiet = (row.value or "").upper() == "N/A"
             for col, text in enumerate((row.label, row.value, row.notes)):
                 item = QTableWidgetItem(text)
@@ -1039,12 +1127,30 @@ class GeneratePage(QWidget):
                     item.setFont(bold)
                 if col == 2:
                     item.setForeground(muted)
-                self.kpi_table.setItem(i, col, item)
-        self.kpi_table.resizeColumnsToContents()
-        self.kpi_table.setColumnWidth(2, max(280, self.kpi_table.columnWidth(2)))
+                kpi_table.setItem(i, col, item)
+        kpi_table.resizeColumnsToContents()
+        kpi_table.setColumnWidth(2, max(280, kpi_table.columnWidth(2)))
+        kpi_table.setMinimumHeight(min(280, 40 + kpi_table.rowCount() * 32))
+        lay.addWidget(kpi_table)
 
-        # Team completion
-        self.completion_team_table.setRowCount(len(vm.completion_team))
+        lay.addWidget(QLabel("<b>Sprint Completion &amp; Velocity</b>"))
+        note = QLabel(
+            "Completion — Stories + Tasks done (Done/Complete category, or Resolved). "
+            "Target ≥ 90%. Velocity — story points delivered ÷ effective person-days."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {c['muted']};")
+        lay.addWidget(note)
+
+        team_title = QLabel("Team")
+        team_title.setStyleSheet("font-weight: 600;")
+        lay.addWidget(team_title)
+        team_table = self._register_table(QTableWidget())
+        team_table.setColumnCount(3)
+        team_table.setHorizontalHeaderLabels(["Metric", "Value", "Target"])
+        team_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        team_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        team_table.setRowCount(len(vm.completion_team))
         for i, row in enumerate(vm.completion_team):
             for col, text in enumerate((row.metric, row.value, row.target)):
                 item = QTableWidgetItem(text)
@@ -1058,12 +1164,33 @@ class GeneratePage(QWidget):
                     item.setTextAlignment(
                         int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     )
-                self.completion_team_table.setItem(i, col, item)
-        self.completion_team_table.resizeColumnsToContents()
+                team_table.setItem(i, col, item)
+        team_table.resizeColumnsToContents()
+        team_table.setMinimumHeight(40 + team_table.rowCount() * 32)
+        lay.addWidget(team_table)
 
-        # Per-person
-        self.completion_people_table.setSortingEnabled(False)
-        self.completion_people_table.setRowCount(len(vm.completion_people))
+        person_title = QLabel("Per-person")
+        person_title.setStyleSheet("font-weight: 600;")
+        lay.addWidget(person_title)
+        people_table = self._register_table(QTableWidget())
+        people_table.setColumnCount(6)
+        people_table.setHorizontalHeaderLabels(
+            [
+                "Person",
+                "Tickets done / committed",
+                "Tickets %",
+                "SP delivered / committed",
+                "SP %",
+                "SP / person-day",
+            ]
+        )
+        people_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        people_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        people_table.setSortingEnabled(True)
+        people_table.setSortingEnabled(False)
+        people_table.setRowCount(len(vm.completion_people))
         for i, row in enumerate(vm.completion_people):
             vals = [
                 row.name,
@@ -1083,6 +1210,9 @@ class GeneratePage(QWidget):
                     item.setTextAlignment(
                         int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     )
-                self.completion_people_table.setItem(i, col, item)
-        self.completion_people_table.resizeColumnsToContents()
-        self.completion_people_table.setSortingEnabled(True)
+                people_table.setItem(i, col, item)
+        people_table.resizeColumnsToContents()
+        people_table.setSortingEnabled(True)
+        people_table.setMinimumHeight(min(320, 48 + people_table.rowCount() * 32))
+        lay.addWidget(people_table)
+        self.kpis_sections.addWidget(section)

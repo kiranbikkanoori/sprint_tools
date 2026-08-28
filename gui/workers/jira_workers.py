@@ -187,3 +187,46 @@ class GenerateReportWorker(_BaseWorker):
             self.finished.emit(written)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
+
+
+class GeneratePackWorker(_BaseWorker):
+    """Generate one report per pack slot; stop on first hard failure."""
+
+    def __init__(
+        self,
+        entries: list[tuple[str, SprintConfig, dict]],
+        output_dir: Path,
+        make_report: bool,
+        make_chart: bool,
+    ) -> None:
+        super().__init__()
+        # entries: (label, config, payload)
+        self.entries = entries
+        self.output_dir = output_dir
+        self.make_report = make_report
+        self.make_chart = make_chart
+
+    def run(self) -> None:
+        results: list[dict] = []
+        n = len(self.entries)
+        try:
+            for i, (label, config, payload) in enumerate(self.entries):
+                self.progress.emit(f"Generating {i + 1}/{n}: {label}", i, n)
+                written = report_service.generate_outputs(
+                    config,
+                    payload,
+                    self.output_dir,
+                    make_report=self.make_report,
+                    make_chart=self.make_chart,
+                )
+                written["label"] = label
+                results.append(written)
+            self.progress.emit(f"Done — {n} sprint(s)", n, n)
+            self.finished.emit(results)
+        except Exception as exc:  # noqa: BLE001
+            which = ""
+            if results:
+                which = f" (failed after {len(results)} of {n})"
+            elif self.entries:
+                which = f" (while generating: {self.entries[len(results)][0]})"
+            self.failed.emit(f"{exc}{which}")

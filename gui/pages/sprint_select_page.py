@@ -1,12 +1,10 @@
-"""Pick a Jira board and sprint, then fetch issues + worklogs."""
+"""Pick Jira boards and sprints into a presenter pack."""
 
 from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import Signal
-
-log = logging.getLogger(__name__)
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -14,6 +12,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.pack_model import ReportPack
 from gui.settings import AppSettings, save_settings
 from gui.workers.jira_workers import (
     FetchBoardsWorker,
@@ -29,19 +30,46 @@ from gui.workers.jira_workers import (
     run_worker,
 )
 
+log = logging.getLogger(__name__)
+
 
 class SprintSelectPage(QWidget):
-    """Emits ``sprint_loaded(payload, sprint)`` when fetch completes."""
+    """Build a pack of board+sprint payloads. Emits ``sprint_added`` after each fetch."""
 
-    sprint_loaded = Signal(dict, dict)
+    sprint_added = Signal(dict, dict, dict)  # payload, sprint, board_meta
+    configure_requested = Signal()
 
     def __init__(self, settings: AppSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.settings = settings
         self._boards: list[dict] = []
         self._sprints: list[dict] = []
+        self._pack = ReportPack()
 
         title = QLabel("<h2>Select board &amp; sprint</h2>")
+        hint = QLabel(
+            "Add one or more sprints to the pack, then continue to Configure. "
+            "A single sprint works the same as before."
+        )
+        hint.setWordWrap(True)
+        hint.setObjectName("sprintHint")
+        self.hint = hint
+
+        # ── Pack list ──
+        pack_group = QGroupBox("Pack")
+        pack_lay = QVBoxLayout(pack_group)
+        self.pack_empty = QLabel("No sprints yet — pick a board and sprint, then Add sprint.")
+        self.pack_empty.setWordWrap(True)
+        self.pack_list = QListWidget()
+        self.pack_list.setMinimumHeight(100)
+        pack_btns = QHBoxLayout()
+        self.remove_btn = QPushButton("Remove selected")
+        self.remove_btn.setEnabled(False)
+        pack_btns.addWidget(self.remove_btn)
+        pack_btns.addStretch(1)
+        pack_lay.addWidget(self.pack_empty)
+        pack_lay.addWidget(self.pack_list)
+        pack_lay.addLayout(pack_btns)
 
         # ── Board picker ──
         board_group = QGroupBox("Board")
@@ -69,7 +97,7 @@ class SprintSelectPage(QWidget):
         self.sprint_combo.setMinimumWidth(360)
         sg_form.addRow("Sprint", self.sprint_combo)
         self.sprint_meta = QLabel("")
-        self.sprint_meta.setStyleSheet("color: #555;")
+        self.sprint_meta.setObjectName("sprintMeta")
         sg_form.addRow("", self.sprint_meta)
 
         # ── Actions / progress ──
@@ -79,14 +107,19 @@ class SprintSelectPage(QWidget):
         self.progress_bar.setVisible(False)
 
         btn_row = QHBoxLayout()
-        self.load_btn = QPushButton("Load sprint →")
-        self.load_btn.setDefault(True)
-        self.load_btn.setEnabled(False)
+        self.add_btn = QPushButton("Add sprint")
+        self.add_btn.setDefault(True)
+        self.add_btn.setEnabled(False)
+        self.configure_btn = QPushButton("Configure →")
+        self.configure_btn.setEnabled(False)
+        btn_row.addWidget(self.add_btn)
         btn_row.addStretch(1)
-        btn_row.addWidget(self.load_btn)
+        btn_row.addWidget(self.configure_btn)
 
         layout = QVBoxLayout(self)
         layout.addWidget(title)
+        layout.addWidget(self.hint)
+        layout.addWidget(pack_group)
         layout.addWidget(board_group)
         layout.addWidget(sprint_group)
         layout.addWidget(self.progress_label)
@@ -94,12 +127,42 @@ class SprintSelectPage(QWidget):
         layout.addStretch(1)
         layout.addLayout(btn_row)
 
-        # ── wiring ──
         self.search_btn.clicked.connect(self._search_boards)
         self.board_query.returnPressed.connect(self._search_boards)
         self.board_combo.currentIndexChanged.connect(self._on_board_changed)
         self.sprint_combo.currentIndexChanged.connect(self._on_sprint_changed)
-        self.load_btn.clicked.connect(self._load_sprint)
+        self.add_btn.clicked.connect(self._add_sprint)
+        self.configure_btn.clicked.connect(self.configure_requested.emit)
+        self.remove_btn.clicked.connect(self._remove_selected)
+        self.pack_list.currentRowChanged.connect(
+            lambda i: self.remove_btn.setEnabled(i >= 0)
+        )
+
+    # ── pack sync (MainWindow owns the model) ───────────────────────────
+
+    def set_pack(self, pack: ReportPack) -> None:
+        """Refresh the pack list from MainWindow's ReportPack."""
+        self._pack = pack
+        self.pack_list.clear()
+        for slot in pack.slots:
+            item = QListWidgetItem(slot.label)
+            item.setToolTip(
+                f"{len(slot.payload.get('issues', []))} issues · "
+                f"board id {slot.board_id}"
+            )
+            self.pack_list.addItem(item)
+        empty = len(pack) == 0
+        self.pack_empty.setVisible(empty)
+        self.pack_list.setVisible(not empty)
+        self.configure_btn.setEnabled(not empty)
+        self.remove_btn.setEnabled(self.pack_list.currentRow() >= 0)
+
+    def _remove_selected(self) -> None:
+        row = self.pack_list.currentRow()
+        if row < 0:
+            return
+        self._pack.remove_at(row)
+        self.set_pack(self._pack)
 
     # ── helpers ─────────────────────────────────────────────────────────
 
@@ -107,9 +170,15 @@ class SprintSelectPage(QWidget):
         self.progress_label.setText(msg if busy else "")
         self.progress_bar.setVisible(busy)
         self.search_btn.setEnabled(not busy)
-        self.load_btn.setEnabled(not busy and self.sprint_combo.currentIndex() >= 0
-                                 and self.sprint_combo.count() > 0)
+        self.add_btn.setEnabled(
+            not busy
+            and self.sprint_combo.currentIndex() >= 0
+            and self.sprint_combo.count() > 0
+        )
+        self.configure_btn.setEnabled(not busy and len(self._pack) > 0)
+        self.remove_btn.setEnabled(not busy and self.pack_list.currentRow() >= 0)
 
+    @Slot(str)
     def _show_error(self, msg: str) -> None:
         self._busy("", False)
         QMessageBox.critical(self, "Jira error", msg)
@@ -119,14 +188,19 @@ class SprintSelectPage(QWidget):
     def _search_boards(self) -> None:
         creds = self.settings.effective_credentials()
         if not creds.get("JIRA_BASE_URL"):
-            QMessageBox.warning(self, "No connection", "Configure Jira credentials in Settings first.")
+            QMessageBox.warning(
+                self, "No connection", "Configure Jira credentials in Settings first."
+            )
             return
         self._busy("Searching boards…", True)
         worker = FetchBoardsWorker(creds, self.board_query.text().strip())
-        worker.finished.connect(self._on_boards_loaded)
-        worker.failed.connect(self._show_error)
+        worker.finished.connect(
+            self._on_boards_loaded, Qt.ConnectionType.QueuedConnection
+        )
+        worker.failed.connect(self._show_error, Qt.ConnectionType.QueuedConnection)
         run_worker(worker, self)
 
+    @Slot(list)
     def _on_boards_loaded(self, boards: list) -> None:
         self._boards = boards or []
         self.board_combo.blockSignals(True)
@@ -155,12 +229,14 @@ class SprintSelectPage(QWidget):
         self.sprint_combo.clear()
         self.sprint_meta.setText("")
         worker = FetchSprintListWorker(creds, board["id"])
-        worker.finished.connect(self._on_sprints_loaded)
-        worker.failed.connect(self._show_error)
+        worker.finished.connect(
+            self._on_sprints_loaded, Qt.ConnectionType.QueuedConnection
+        )
+        worker.failed.connect(self._show_error, Qt.ConnectionType.QueuedConnection)
         run_worker(worker, self)
 
+    @Slot(list)
     def _on_sprints_loaded(self, sprints: list) -> None:
-        # Newest first: closed sprints in fetch order tend to be oldest → reverse.
         actives = [s for s in sprints if s.get("state") == "active"]
         futures = [s for s in sprints if s.get("state") == "future"]
         closed = [s for s in sprints if s.get("state") == "closed"]
@@ -186,7 +262,7 @@ class SprintSelectPage(QWidget):
     def _on_sprint_changed(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._sprints):
             self.sprint_meta.setText("")
-            self.load_btn.setEnabled(False)
+            self.add_btn.setEnabled(False)
             return
         s = self._sprints[idx]
         meta = (
@@ -195,12 +271,12 @@ class SprintSelectPage(QWidget):
             f"End: {(s.get('endDate') or '—')[:10]}"
         )
         self.sprint_meta.setText(meta)
-        self.load_btn.setEnabled(True)
+        self.add_btn.setEnabled(True)
 
     # ── fetch sprint payload ────────────────────────────────────────────
 
-    def _load_sprint(self) -> None:
-        log.info("Load sprint clicked")
+    def _add_sprint(self) -> None:
+        log.info("Add sprint clicked")
         idx = self.sprint_combo.currentIndex()
         if idx < 0 or idx >= len(self._sprints):
             log.warning("No sprint selected (idx=%d, count=%d)", idx, len(self._sprints))
@@ -208,8 +284,11 @@ class SprintSelectPage(QWidget):
         sprint = self._sprints[idx]
         board_idx = self.board_combo.currentIndex()
         board = self._boards[board_idx] if 0 <= board_idx < len(self._boards) else None
-        log.info("Loading sprint=%s, board=%s", sprint.get("name"),
-                 board.get("name") if board else None)
+        log.info(
+            "Adding sprint=%s, board=%s",
+            sprint.get("name"),
+            board.get("name") if board else None,
+        )
 
         self.settings.last_sprint_name = sprint.get("name", "")
         if board:
@@ -219,17 +298,21 @@ class SprintSelectPage(QWidget):
 
         creds = self.settings.effective_credentials()
         self._busy(f"Fetching {sprint.get('name', '')}…", True)
-        # Stash the sprint so the result handler can use it without a lambda
-        # (lambdas captured in queued cross-thread connections can crash on Windows).
         self._pending_sprint = sprint
+        self._pending_board = board or {}
 
         worker = FetchSprintDataWorker(creds, sprint)
-        worker.progress.connect(self._on_progress)
-        worker.failed.connect(self._show_error)
-        worker.finished.connect(self._on_sprint_data_ready)
+        worker.progress.connect(
+            self._on_progress, Qt.ConnectionType.QueuedConnection
+        )
+        worker.failed.connect(self._show_error, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(
+            self._on_sprint_data_ready, Qt.ConnectionType.QueuedConnection
+        )
         log.info("Spawning FetchSprintDataWorker thread")
         run_worker(worker, self)
 
+    @Slot(str, int, int)
     def _on_progress(self, msg: str, cur: int, total: int) -> None:
         self.progress_label.setText(msg)
         if total > 0:
@@ -238,13 +321,14 @@ class SprintSelectPage(QWidget):
         else:
             self.progress_bar.setRange(0, 0)
 
+    @Slot(dict)
     def _on_sprint_data_ready(self, payload: dict) -> None:
         log.info("Sprint data ready: %d issues", len(payload.get("issues", [])))
         sprint = getattr(self, "_pending_sprint", {}) or {}
-        self._on_sprint_loaded(payload, sprint)
-
-    def _on_sprint_loaded(self, payload: dict, sprint: dict) -> None:
-        log.info("SprintSelectPage._on_sprint_loaded: %s (%d issues)",
-                 sprint.get("name"), len(payload.get("issues", [])))
+        board = getattr(self, "_pending_board", {}) or {}
         self._busy("", False)
-        self.sprint_loaded.emit(payload, sprint)
+        board_meta = {
+            "id": int(board.get("id", 0) or 0),
+            "name": str(board.get("name") or ""),
+        }
+        self.sprint_added.emit(payload, sprint, board_meta)
