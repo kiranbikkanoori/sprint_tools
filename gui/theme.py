@@ -83,6 +83,116 @@ def overview_chip_style(label: str) -> dict[str, str]:
     return {"bg": bg, "border": border, "accent": accent, "label": lab, "detail": detail, "value": text}
 
 
+# Report tables (Hours / Fix-ups / Tickets / KPIs) — card look, not Excel grid
+_TABLE_LIGHT = {
+    "surface": "#FFFFFF",
+    "header_bg": "#EEF3FA",
+    "header_fg": "#0B3D91",
+    "hairline": "#E8EEF5",
+    "hover": "#F7FAFF",
+    "total_bg": "#E8F0FF",
+    "total_fg": "#2176FF",
+    "key_fg": "#2176FF",
+    "muted": "#64748B",
+    "text": "#0F172A",
+    "border": "#D5DEEC",
+    "warn_bg": "#FFF7ED",
+    "warn_fg": "#DC2626",
+    "pill_high_bg": "#FEE2E2",
+    "pill_high_fg": "#991B1B",
+    "pill_med_bg": "#FFEDD5",
+    "pill_med_fg": "#C2410C",
+    "pill_low_bg": "#F1F5F9",
+    "pill_low_fg": "#475569",
+}
+_TABLE_DARK = {
+    "surface": "#1E293B",
+    "header_bg": "#1E3A5F",
+    "header_fg": "#93C5FD",
+    "hairline": "#334155",
+    "hover": "#172033",
+    "total_bg": "#1E3A5F",
+    "total_fg": "#5A9BFF",
+    "key_fg": "#5A9BFF",
+    "muted": "#94A3B8",
+    "text": "#E2E8F0",
+    "border": "#334155",
+    "warn_bg": "#3B2F1A",
+    "warn_fg": "#FCA5A5",
+    "pill_high_bg": "#7F1D1D",
+    "pill_high_fg": "#FECACA",
+    "pill_med_bg": "#7C2D12",
+    "pill_med_fg": "#FED7AA",
+    "pill_low_bg": "#334155",
+    "pill_low_fg": "#CBD5E1",
+}
+
+
+def table_style_tokens() -> dict[str, str]:
+    """Colors for Generate report tables (light / dark)."""
+    return _TABLE_DARK if app_theme() == "dark" else _TABLE_LIGHT
+
+
+def report_table_stylesheet() -> str:
+    """QSS for card-style QTableWidget (no Excel grid cage)."""
+    t = table_style_tokens()
+    return f"""
+QTableWidget {{
+    background: {t['surface']};
+    color: {t['text']};
+    border: 1px solid {t['border']};
+    border-radius: 12px;
+    gridline-color: transparent;
+    outline: none;
+    selection-background-color: {t['hover']};
+    selection-color: {t['text']};
+}}
+QTableWidget::item {{
+    padding: 6px 10px;
+    border: none;
+    border-bottom: 1px solid {t['hairline']};
+}}
+QTableWidget::item:selected {{
+    background: {t['hover']};
+    color: {t['text']};
+}}
+QHeaderView::section {{
+    background: {t['header_bg']};
+    color: {t['header_fg']};
+    border: none;
+    border-bottom: 1px solid {t['border']};
+    border-right: none;
+    padding: 8px 10px;
+    font-weight: 600;
+    font-size: 12px;
+}}
+QHeaderView::section:first {{
+    border-top-left-radius: 11px;
+}}
+QHeaderView::section:last {{
+    border-top-right-radius: 11px;
+}}
+QTableCornerButton::section {{
+    background: {t['header_bg']};
+    border: none;
+    border-bottom: 1px solid {t['border']};
+}}
+QScrollBar:vertical {{
+    background: {t['surface']};
+    width: 10px;
+    margin: 0;
+}}
+QScrollBar::handle:vertical {{
+    background: {t['border']};
+    border-radius: 5px;
+    min-height: 24px;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+"""
+
+
 def capsule_stylesheet() -> str:
     """QSS for ``CapsuleBar`` buttons in the current theme."""
     c = theme_colors()

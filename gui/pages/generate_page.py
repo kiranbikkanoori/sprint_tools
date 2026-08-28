@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -37,7 +38,13 @@ from PySide6.QtWidgets import (
 from config_parser import SprintConfig
 from gui.report_view_model import ReportViewModel
 from gui.settings import AppSettings, output_dir_default
-from gui.theme import theme_colors, ticket_type_chips, overview_chip_style
+from gui.theme import (
+    overview_chip_style,
+    report_table_stylesheet,
+    table_style_tokens,
+    theme_colors,
+    ticket_type_chips,
+)
 from gui.widgets.capsule_bar import CapsuleBar
 from gui.workers.jira_workers import GenerateReportWorker, run_worker
 
@@ -168,8 +175,35 @@ class GeneratePage(QWidget):
         self.tickets_note.setStyleSheet(f"color: {c['muted']};")
         self.kpis_intro.setStyleSheet(f"color: {c['muted']};")
         self.completion_note.setStyleSheet(f"color: {c['muted']};")
+        self._style_report_tables()
+        t = table_style_tokens()
+        self.hours_drawer.setStyleSheet(
+            f"QTextEdit {{ background: {t['surface']}; color: {t['text']}; "
+            f"border: 1px solid {t['border']}; border-radius: 12px; padding: 8px; }}"
+        )
         if self.view_model is not None:
             self._populate_review(self.view_model)
+
+    def _style_report_tables(self) -> None:
+        """Apply card-style QSS to Hours / Fix-ups / Tickets / KPIs tables."""
+        qss = report_table_stylesheet()
+        for table in (
+            self.hours_table,
+            self.fixups_table,
+            self.tickets_table,
+            self.kpi_table,
+            self.completion_team_table,
+            self.completion_people_table,
+        ):
+            table.setShowGrid(False)
+            table.setStyleSheet(qss)
+            table.verticalHeader().setVisible(False)
+            table.setFrameShape(QFrame.Shape.NoFrame)
+            hh = table.horizontalHeader()
+            hh.setHighlightSections(False)
+            hh.setDefaultAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
 
     # ── section builders ────────────────────────────────────────────────
 
@@ -217,6 +251,7 @@ class GeneratePage(QWidget):
         self.hours_table = QTableWidget()
         self.hours_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.hours_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.hours_table.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.hours_table.cellClicked.connect(self._on_hours_cell)
         split.addWidget(self.hours_table)
 
@@ -243,14 +278,10 @@ class GeneratePage(QWidget):
         self.fixups_table.setHorizontalHeaderLabels(
             ["Severity", "Type", "Key", "Person", "Summary", "Why / what to do"]
         )
-        self.fixups_table.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeMode.Stretch
-        )
-        self.fixups_table.horizontalHeader().setSectionResizeMode(
-            5, QHeaderView.ResizeMode.Stretch
-        )
         self.fixups_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.fixups_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.fixups_table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.fixups_table.setWordWrap(False)
         lay.addWidget(self.fixups_table, stretch=1)
 
         jump = QHBoxLayout()
@@ -300,12 +331,11 @@ class GeneratePage(QWidget):
         self.tickets_table.setHorizontalHeaderLabels(
             ["Key", "Summary", "Type", "Assignee", "Status", "Estimate (h)", "Remaining (h)", "SP"]
         )
-        self.tickets_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
         self.tickets_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tickets_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tickets_table.setSortingEnabled(True)
+        self.tickets_table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.tickets_table.setWordWrap(False)
         lay.addWidget(self.tickets_table, stretch=1)
 
         for wdg in (self.ticket_status, self.ticket_assignee, self.ticket_type):
@@ -578,16 +608,63 @@ class GeneratePage(QWidget):
         entries.sort(key=lambda x: (-x[2], x[0]))
         return entries
 
+    def _fit_table_columns(
+        self,
+        table: QTableWidget,
+        *,
+        stretch: list[int] | None = None,
+        mins: dict[int, int] | None = None,
+        slack: int = 20,
+    ) -> None:
+        """Size columns from content + header text so labels are not ellipsized."""
+        stretch = stretch or []
+        mins = mins or {}
+        header = table.horizontalHeader()
+        header.setMinimumSectionSize(48)
+        # Measure with a slightly bold font (headers / keys are often semibold).
+        measure = QFont(table.font())
+        measure.setWeight(QFont.Weight.DemiBold)
+        fm = QFontMetrics(measure)
+
+        for c in range(table.columnCount()):
+            header.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        table.resizeColumnsToContents()
+
+        for c in range(table.columnCount()):
+            if c in stretch:
+                header.setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch)
+                continue
+            content_w = table.columnWidth(c)
+            hdr_item = table.horizontalHeaderItem(c)
+            hdr_w = fm.boundingRect(hdr_item.text()).width() + 32 if hdr_item else 0
+            # Scan cell text for longest value (ResizeToContents can undersize bold keys).
+            longest = hdr_w
+            for r in range(table.rowCount()):
+                item = table.item(r, c)
+                if item is not None and item.text():
+                    longest = max(longest, fm.boundingRect(item.text()).width() + 28)
+                wdg = table.cellWidget(r, c)
+                if wdg is not None:
+                    longest = max(longest, wdg.sizeHint().width() + 12)
+            width = max(content_w + slack, longest, mins.get(c, 0))
+            table.setColumnWidth(c, width)
+            header.setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+
     def _make_day_cell_widget(
         self, entries: list[tuple[str, str, float]], total_h: float
     ) -> QWidget:
         host = QWidget()
         host.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         lay = QVBoxLayout(host)
-        lay.setContentsMargins(3, 2, 3, 2)
-        lay.setSpacing(2)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
         c = theme_colors()
         chips = ticket_type_chips()
+
+        chip_font = QFont()
+        chip_font.setPointSize(10)
+        chip_font.setWeight(QFont.Weight.DemiBold)
+        fm = QFontMetrics(chip_font)
 
         if not entries:
             empty = QLabel("—")
@@ -600,11 +677,17 @@ class GeneratePage(QWidget):
         for key, bucket, hrs in shown:
             bg, fg = chips.get(bucket, chips["task"])
             chip = QLabel(key)
+            chip.setFont(chip_font)
             chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
             chip.setToolTip(f"{hrs:.1f}h · {bucket}")
+            # Size from bold metrics so first/last glyphs are not clipped (same as capsules).
+            text_w = fm.boundingRect(key).width()
+            chip.setMinimumWidth(text_w + 18)
+            chip.setMinimumHeight(fm.height() + 10)
+            chip.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             chip.setStyleSheet(
                 f"background-color: {bg}; color: {fg}; border-radius: 4px; "
-                f"padding: 2px 5px; font-size: 10px; font-weight: 600;"
+                f"padding: 3px 8px; font-size: 10px; font-weight: 600;"
             )
             lay.addWidget(chip)
 
@@ -657,23 +740,71 @@ class GeneratePage(QWidget):
             self.hours_table.setItem(
                 r_i, 3 + len(dates), QTableWidgetItem(f"{row.capacity:.1f}")
             )
-            # ~22px per chip + margins
-            self.hours_table.setRowHeight(r_i, max(36, 8 + row_max * 22))
+            # Chip height ~ fm.height+10 + spacing; leave room so glyphs are not clipped.
+            self.hours_table.setRowHeight(r_i, max(44, 12 + row_max * 28))
             team_logged += row.logged
             team_rem += row.remaining
             team_cap += row.capacity
 
         tot = len(vm.hours_rows)
-        self.hours_table.setItem(tot, 0, QTableWidgetItem("Team total"))
+        t = table_style_tokens()
+        total_bg = QBrush(QColor(t["total_bg"]))
+        total_fg = QColor(t["total_fg"])
+        bold = QFont()
+        bold.setBold(True)
+        name_item = QTableWidgetItem("Team total")
+        name_item.setBackground(total_bg)
+        name_item.setForeground(total_fg)
+        name_item.setFont(bold)
+        self.hours_table.setItem(tot, 0, name_item)
         for c_i, v in enumerate(team_day):
-            self.hours_table.setItem(tot, 1 + c_i, QTableWidgetItem(f"{v:.1f}"))
-        self.hours_table.setItem(tot, 1 + len(dates), QTableWidgetItem(f"{team_logged:.1f}"))
-        self.hours_table.setItem(tot, 2 + len(dates), QTableWidgetItem(f"{team_rem:.1f}"))
-        self.hours_table.setItem(tot, 3 + len(dates), QTableWidgetItem(f"{team_cap:.1f}"))
-        self.hours_table.resizeColumnsToContents()
-        # Day columns need room for ticket keys
-        for c_i in range(len(dates)):
-            self.hours_table.setColumnWidth(1 + c_i, max(self.hours_table.columnWidth(1 + c_i), 110))
+            item = QTableWidgetItem(f"{v:.1f}")
+            item.setBackground(total_bg)
+            item.setForeground(total_fg)
+            item.setFont(bold)
+            item.setTextAlignment(
+                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            )
+            self.hours_table.setItem(tot, 1 + c_i, item)
+        for col, val in (
+            (1 + len(dates), team_logged),
+            (2 + len(dates), team_rem),
+            (3 + len(dates), team_cap),
+        ):
+            item = QTableWidgetItem(f"{val:.1f}")
+            item.setBackground(total_bg)
+            item.setForeground(total_fg)
+            item.setFont(bold)
+            item.setTextAlignment(
+                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            )
+            self.hours_table.setItem(tot, col, item)
+        # Style numeric columns on person rows
+        for r_i, row in enumerate(vm.hours_rows):
+            for col in (1 + len(dates), 2 + len(dates), 3 + len(dates)):
+                it = self.hours_table.item(r_i, col)
+                if it is not None:
+                    it.setTextAlignment(
+                        int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    )
+            name_it = self.hours_table.item(r_i, 0)
+            if name_it is not None:
+                font = QFont()
+                font.setBold(True)
+                name_it.setFont(font)
+        n_dates = len(dates)
+        self._fit_table_columns(
+            self.hours_table,
+            stretch=[],
+            mins={
+                **{1 + i: 128 for i in range(n_dates)},
+                0: 100,
+                1 + n_dates: 88,
+                2 + n_dates: 100,
+                3 + n_dates: 96,
+            },
+            slack=16,
+        )
         self.hours_drawer.clear()
 
     def _on_hours_cell(self, row: int, col: int) -> None:
@@ -718,21 +849,72 @@ class GeneratePage(QWidget):
             self.fixups_table.setRowCount(0)
             return
         self.fixups_table.setRowCount(len(vm.fixups))
-        c = theme_colors()
-        high_fg = QColor(c["warn_strong"])
-        med_fg = QColor(c["warn_text"])
+        t = table_style_tokens()
+        key_fg = QColor(t["key_fg"])
+        muted = QColor(t["muted"])
         for i, f in enumerate(vm.fixups):
-            vals = [f.severity, f.type_label, f.key, f.person, f.summary, f.action]
-            for col, v in enumerate(vals):
-                item = QTableWidgetItem(v)
-                if col == 0 and f.severity == "High":
-                    item.setForeground(high_fg)
-                    font = QFont()
-                    font.setBold(True)
-                    item.setFont(font)
-                elif col == 0 and f.severity == "Med":
-                    item.setForeground(med_fg)
-                self.fixups_table.setItem(i, col, item)
+            pill = self._severity_pill(f.severity)
+            self.fixups_table.setCellWidget(i, 0, pill)
+            sev_item = QTableWidgetItem(f.severity)
+            sev_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            # Keep text for accessibility / copy; pill covers the cell visually.
+            sev_item.setForeground(QColor(0, 0, 0, 0))
+            self.fixups_table.setItem(i, 0, sev_item)
+            type_item = QTableWidgetItem(f.type_label)
+            key_item = QTableWidgetItem(f.key)
+            key_item.setForeground(key_fg)
+            font = QFont()
+            font.setBold(True)
+            key_item.setFont(font)
+            person_item = QTableWidgetItem(f.person)
+            summary_item = QTableWidgetItem(f.summary)
+            action_item = QTableWidgetItem(f.action)
+            action_item.setForeground(muted)
+            self.fixups_table.setItem(i, 1, type_item)
+            self.fixups_table.setItem(i, 2, key_item)
+            self.fixups_table.setItem(i, 3, person_item)
+            self.fixups_table.setItem(i, 4, summary_item)
+            self.fixups_table.setItem(i, 5, action_item)
+            self.fixups_table.setRowHeight(i, 44)
+        self._fit_table_columns(
+            self.fixups_table,
+            stretch=[4, 5],
+            mins={0: 88, 1: 140, 2: 120, 3: 100},
+            slack=18,
+        )
+
+    def _severity_pill(self, severity: str) -> QWidget:
+        """Soft severity pill for Fix-ups (theme-aware)."""
+        t = table_style_tokens()
+        sev = (severity or "").strip() or "—"
+        if sev == "High":
+            bg, fg = t["pill_high_bg"], t["pill_high_fg"]
+        elif sev == "Med":
+            bg, fg = t["pill_med_bg"], t["pill_med_fg"]
+        else:
+            bg, fg = t["pill_low_bg"], t["pill_low_fg"]
+        host = QWidget()
+        lay = QHBoxLayout(host)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        lab = QLabel(sev)
+        font = QFont()
+        font.setPointSize(11)
+        font.setWeight(QFont.Weight.Bold)
+        lab.setFont(font)
+        fm = QFontMetrics(font)
+        lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lab.setMinimumWidth(fm.boundingRect(sev).width() + 20)
+        lab.setMinimumHeight(fm.height() + 10)
+        lab.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        lab.setStyleSheet(
+            f"background: {bg}; color: {fg}; border-radius: 11px; "
+            f"padding: 4px 12px; font-size: 11px; font-weight: 700;"
+        )
+        lay.addWidget(lab)
+        lay.addStretch(1)
+        host.setMinimumHeight(fm.height() + 18)
+        return host
 
     def _populate_tickets(self, vm: ReportViewModel) -> None:
         statuses = sorted({t.status for t in vm.tickets})
@@ -777,50 +959,86 @@ class GeneratePage(QWidget):
 
         self.tickets_table.setSortingEnabled(False)
         self.tickets_table.setRowCount(len(rows))
-        c = theme_colors()
-        warn_bg = QBrush(QColor(c["warn_bg"]))
-        warn_fg = QColor(c["warn_strong"])
+        t = table_style_tokens()
+        warn_bg = QBrush(QColor(t["warn_bg"]))
+        warn_fg = QColor(t["warn_fg"])
+        key_fg = QColor(t["key_fg"])
         warn_font = QFont()
         warn_font.setBold(True)
+        key_font = QFont()
+        key_font.setBold(True)
         rem_col = 6  # Remaining (h)
-        for i, t in enumerate(rows):
-            rem = "—" if t.remaining_hours is None else f"{t.remaining_hours:.1f}"
-            if t.has_warn and t.remaining_hours is not None:
-                rem = f"{t.remaining_hours:.1f} ⚠"
+        for i, tick in enumerate(rows):
+            rem = "—" if tick.remaining_hours is None else f"{tick.remaining_hours:.1f}"
+            if tick.has_warn and tick.remaining_hours is not None:
+                rem = f"{tick.remaining_hours:.1f} ⚠"
             vals = [
-                t.key,
-                t.summary,
-                t.type_,
-                t.assignee,
-                t.status,
-                f"{t.estimate_hours:.1f}",
+                tick.key,
+                tick.summary,
+                tick.type_,
+                tick.assignee,
+                tick.status,
+                f"{tick.estimate_hours:.1f}",
                 rem,
-                f"{t.story_points:g}",
+                f"{tick.story_points:g}",
             ]
             for col, v in enumerate(vals):
                 item = QTableWidgetItem(v)
-                if t.has_warn:
+                if col == 0:
+                    item.setForeground(key_fg)
+                    item.setFont(key_font)
+                if col in (5, 6, 7):
+                    item.setTextAlignment(
+                        int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    )
+                if tick.has_warn:
                     item.setBackground(warn_bg)
                     if col == rem_col:
                         item.setForeground(warn_fg)
                         item.setFont(warn_font)
                 self.tickets_table.setItem(i, col, item)
         self.tickets_table.setSortingEnabled(True)
+        self._fit_table_columns(
+            self.tickets_table,
+            stretch=[1],
+            mins={
+                0: 120,  # Key
+                2: 72,   # Type
+                3: 110,  # Assignee
+                4: 100,  # Status
+                5: 100,  # Estimate (h)
+                6: 110,  # Remaining (h)
+                7: 48,   # SP
+            },
+            slack=18,
+        )
 
     def _populate_kpis(self, vm: ReportViewModel) -> None:
-        # Sprint KPI Summary
-        self.kpi_table.setRowCount(len(vm.kpi_rows))
+        t = table_style_tokens()
+        key_fg = QColor(t["key_fg"])
+        muted = QColor(t["muted"])
         bold = QFont()
         bold.setBold(True)
+
+        # Sprint KPI Summary
+        self.kpi_table.setRowCount(len(vm.kpi_rows))
         for i, row in enumerate(vm.kpi_rows):
             emphasize = row.label in (
                 "Sprint completion rate",
                 "Sprint velocity",
             )
+            quiet = (row.value or "").upper() == "N/A"
             for col, text in enumerate((row.label, row.value, row.notes)):
                 item = QTableWidgetItem(text)
-                if emphasize and col <= 1:
+                if quiet:
+                    item.setForeground(muted)
+                elif emphasize and col == 1:
                     item.setFont(bold)
+                    item.setForeground(key_fg)
+                elif emphasize and col == 0:
+                    item.setFont(bold)
+                if col == 2:
+                    item.setForeground(muted)
                 self.kpi_table.setItem(i, col, item)
         self.kpi_table.resizeColumnsToContents()
         self.kpi_table.setColumnWidth(2, max(280, self.kpi_table.columnWidth(2)))
@@ -832,6 +1050,10 @@ class GeneratePage(QWidget):
                 item = QTableWidgetItem(text)
                 if row.emphasize and col <= 1:
                     item.setFont(bold)
+                if row.emphasize and col == 1:
+                    item.setForeground(key_fg)
+                if col == 2:
+                    item.setForeground(muted)
                 if col >= 1:
                     item.setTextAlignment(
                         int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -853,6 +1075,10 @@ class GeneratePage(QWidget):
             ]
             for col, text in enumerate(vals):
                 item = QTableWidgetItem(text)
+                if col == 0:
+                    font = QFont()
+                    font.setBold(True)
+                    item.setFont(font)
                 if col >= 2:
                     item.setTextAlignment(
                         int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
