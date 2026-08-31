@@ -260,13 +260,148 @@ class ConfigPage(QWidget):
         except Exception:  # noqa: BLE001
             log.debug("flush_active save failed", exc_info=True)
 
-    def ensure_slot_config(self, slot: PackSlot) -> SprintConfig:
-        """Return slot.config, building a default from payload if missing."""
-        if slot.config is not None:
-            return slot.config
-        cfg = self.build_config_from_payload(slot.payload, slot.sprint, slot.board_id)
-        slot.config = cfg
+    def build_config_from_payload(
+        self, payload: dict, sprint: dict, board_id: int
+    ) -> SprintConfig:
+        """Build config for one sprint.
+
+        Team members are **only** people assigned on this sprint's issues
+        (plus anyone named in planned leaves — genuine leave-only cases).
+
+        Older saved JSON / board roster must not invent teammates from other
+        sprints that share the same Jira board.
+        """
+        cfg = SprintConfig()
+        cfg.sprint_name = sprint.get("name", "")
+        try:
+            sd = date.fromisoformat((sprint.get("startDate") or "")[:10])
+            ed = date.fromisoformat((sprint.get("endDate") or "")[:10])
+            weeks = max(1, round((ed - sd).days / 7))
+            cfg.sprint_duration_weeks = int(weeks)
+        except Exception:
+            cfg.sprint_duration_weeks = 2
+
+        saved: SprintConfig | None = None
+        saved_path = configs_dir() / f"{cfg.sprint_name.replace(' ', '_')}.json"
+        if saved_path.exists():
+            try:
+                saved = config_io.load_json(saved_path)
+            except Exception:  # noqa: BLE001
+                saved = None
+
+        if saved is not None:
+            # Keep sprint-level settings from the last save of this sprint.
+            cfg = saved
+
+        assignees = jira_service.assignees_in_payload(payload)
+        assignee_set = set(assignees)
+        preserved = {m.name: m for m in (saved.team_members if saved else [])}
+        leave_names = {
+            (entry.name or "").strip()
+            for entry in (cfg.planned_leaves or [])
+            if (entry.name or "").strip()
+        }
+
+        team: list[TeamMember] = []
+        for name in assignees:
+            if name in preserved:
+                team.append(preserved[name])
+            else:
+                team.append(TeamMember(name=name, role="Developer", included=True))
+        # True leave-only: named in planned leaves but not on tickets this sprint.
+        for name in leave_names:
+            if name in assignee_set:
+                continue
+            if name in preserved:
+                team.append(preserved[name])
+            else:
+                team.append(TeamMember(name=name, role="Developer", included=True))
+
+        # Role / Include hints from board roster — matching names only (no adds).
+        roster = config_io.load_board_roster(configs_dir(), board_id)
+        if roster:
+            hints = {m.name: m for m in roster}
+            for member in team:
+                hint = hints.get(member.name)
+                if hint is None:
+                    continue
+                if member.name not in preserved:
+                    member.role = hint.role or member.role
+                    member.included = bool(hint.included)
+
+        cfg.team_members = team
+        log.info(
+            "build_config_from_payload %s: %d assignees → %d team members "
+            "(ignored %d extras from saved config)",
+            cfg.sprint_name,
+            len(assignees),
+            len(team),
+            max(0, len(preserved) - len(assignee_set & set(preserved))),
+        )
         return cfg
+
+    def _reconcile_slot_config(self, slot: PackSlot) -> SprintConfig:
+        """Rebuild team from this slot's payload; keep other fields from session config."""
+        fresh = self.build_config_from_payload(slot.payload, slot.sprint, slot.board_id)
+
+        prev = slot.config
+        if prev is None:
+            slot.config = fresh
+            return fresh
+
+        # Preserve in-session edits for non-team fields.
+        fresh.planned_leaves = prev.planned_leaves
+        fresh.other_exclusions = prev.other_exclusions
+        fresh.extra_tickets = prev.extra_tickets
+        fresh.excluded_tickets = prev.excluded_tickets
+        fresh.meeting_days_reserved = prev.meeting_days_reserved
+        fresh.report_date = prev.report_date
+        fresh.show_per_ticket_details = prev.show_per_ticket_details
+        if prev.sprint_duration_weeks:
+            fresh.sprint_duration_weeks = prev.sprint_duration_weeks
+        if prev.sprint_name:
+            fresh.sprint_name = prev.sprint_name
+
+        # Re-apply leave-only from session planned_leaves (in case leaves edited).
+        leave_names = {
+            (entry.name or "").strip()
+            for entry in (fresh.planned_leaves or [])
+            if (entry.name or "").strip()
+        }
+        assignees = set(jira_service.assignees_in_payload(slot.payload))
+        prev_by = {m.name: m for m in prev.team_members}
+        by_name = {m.name: m for m in fresh.team_members}
+        for name in leave_names:
+            if name in by_name or name in assignees:
+                continue
+            old = prev_by.get(name)
+            by_name[name] = old or TeamMember(
+                name=name, role="Developer", included=True
+            )
+
+        # Prefer role/Include from the session for names that belong on this sprint.
+        final: list[TeamMember] = []
+        for member in by_name.values():
+            old = prev_by.get(member.name)
+            if old is not None and member.name in assignees | leave_names:
+                final.append(
+                    TeamMember(name=member.name, role=old.role, included=old.included)
+                )
+            elif member.name in assignees | leave_names:
+                final.append(member)
+        # Stable order: assignees first (payload order), then leave-only.
+        order = list(jira_service.assignees_in_payload(slot.payload))
+        for name in leave_names:
+            if name not in order:
+                order.append(name)
+        by_final = {m.name: m for m in final}
+        fresh.team_members = [by_final[n] for n in order if n in by_final]
+        slot.config = fresh
+        return fresh
+
+    def ensure_slot_config(self, slot: PackSlot) -> SprintConfig:
+        """Return slot.config with team list reconciled to this sprint's payload."""
+        return self._reconcile_slot_config(slot)
 
     def _on_pack_member_changed(self, index: int) -> None:
         if index < 0 or index >= len(self._pack):
@@ -298,48 +433,18 @@ class ConfigPage(QWidget):
         self.flush_active()
         self.back_to_sprint.emit()
 
-    # ── public entry: build / load config for a payload ─────────────────
-
-    def build_config_from_payload(
-        self, payload: dict, sprint: dict, board_id: int
-    ) -> SprintConfig:
-        cfg = SprintConfig()
-        cfg.sprint_name = sprint.get("name", "")
-        try:
-            sd = date.fromisoformat((sprint.get("startDate") or "")[:10])
-            ed = date.fromisoformat((sprint.get("endDate") or "")[:10])
-            weeks = max(1, round((ed - sd).days / 7))
-            cfg.sprint_duration_weeks = int(weeks)
-        except Exception:
-            cfg.sprint_duration_weeks = 2
-
-        saved_path = configs_dir() / f"{cfg.sprint_name.replace(' ', '_')}.json"
-        if saved_path.exists():
-            try:
-                cfg = config_io.load_json(saved_path)
-            except Exception:  # noqa: BLE001
-                pass
-
-        existing_names = {m.name for m in cfg.team_members}
-        for name in jira_service.assignees_in_payload(payload):
-            if name not in existing_names:
-                cfg.team_members.append(
-                    TeamMember(name=name, role="Developer", included=True)
-                )
-
-        roster = config_io.load_board_roster(configs_dir(), board_id)
-        if not roster:
-            roster = config_io.load_recent_team_fallback(configs_dir())
-        if roster:
-            cfg.team_members = config_io.merge_team_members(cfg.team_members, roster)
-        return cfg
+    # ── public entry: populate UI from a payload ─────────────────────────
 
     def populate_from_payload(
         self, payload: dict, sprint: dict, board_id: int | None = None
     ) -> None:
         """Legacy single-sprint populate (also used when seeding a slot)."""
         log.info("ConfigPage.populate_from_payload: sprint=%s", sprint.get("name"))
-        bid = int(board_id if board_id is not None else getattr(self.settings, "last_board_id", 0) or 0)
+        bid = int(
+            board_id
+            if board_id is not None
+            else getattr(self.settings, "last_board_id", 0) or 0
+        )
         self._board_id = bid
         self.payload = payload
         self._last_sprint_meta = sprint
