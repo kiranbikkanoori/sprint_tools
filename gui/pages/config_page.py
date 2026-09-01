@@ -263,11 +263,9 @@ class ConfigPage(QWidget):
     ) -> SprintConfig:
         """Build config for one sprint.
 
-        Team = sprint assignees + planned-leave names + this sprint's saved
-        roster + teammates from related saved configs (same assignee overlap).
-
-        Does **not** merge a whole shared board roster (avoids cross-team noise
-        when RAIL and LMAC share one Jira board).
+        Team = sprint assignees + planned-leave names (no cross-sprint merge).
+        Saved JSON supplies sprint settings and role/include hints for those
+        names; stale extra names in an old save file are ignored on load.
         """
         cfg = SprintConfig()
         cfg.sprint_name = sprint.get("name", "")
@@ -292,16 +290,12 @@ class ConfigPage(QWidget):
             cfg = saved
 
         assignees = jira_service.assignees_in_payload(payload)
-        assignee_set = set(assignees)
-        preserved = {m.name: m for m in (saved.team_members if saved else [])}
         leave_names = {
             (entry.name or "").strip()
             for entry in (cfg.planned_leaves or [])
             if (entry.name or "").strip()
         }
-        related = config_io.team_names_from_related_sprint_configs(
-            configs_dir(), assignees
-        )
+        preserved = {m.name: m for m in (saved.team_members if saved else [])}
         roster = config_io.load_board_roster(configs_dir(), board_id)
         hints = {m.name: m for m in roster}
 
@@ -310,7 +304,9 @@ class ConfigPage(QWidget):
                 return preserved[name]
             if name in hints:
                 h = hints[name]
-                return TeamMember(name=name, role=h.role or "Developer", included=bool(h.included))
+                return TeamMember(
+                    name=name, role=h.role or "Developer", included=bool(h.included)
+                )
             return TeamMember(name=name, role="Developer", included=True)
 
         team: list[TeamMember] = []
@@ -318,31 +314,22 @@ class ConfigPage(QWidget):
         for name in assignees:
             team.append(member_for(name))
             seen.add(name)
-        for name in leave_names:
-            if name in seen:
-                continue
-            team.append(member_for(name))
-            seen.add(name)
-        for name in sorted(preserved):
-            if name in seen:
-                continue
-            team.append(preserved[name])
-            seen.add(name)
-        for name in sorted(related):
+        for name in sorted(leave_names):
             if name in seen:
                 continue
             team.append(member_for(name))
             seen.add(name)
 
+        dropped = len(preserved) - len({m.name for m in team} & set(preserved))
         cfg.team_members = team
         log.info(
-            "build_config_from_payload %s: %d assignees → %d team members "
-            "(%d from saved sprint, %d from related configs)",
+            "build_config_from_payload %s: %d assignees + %d leave-only → %d team "
+            "(%d stale names ignored from saved config)",
             cfg.sprint_name,
             len(assignees),
+            len(leave_names - set(assignees)),
             len(team),
-            len(preserved),
-            len(related),
+            max(0, dropped),
         )
         return cfg
 
