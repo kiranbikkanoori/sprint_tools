@@ -100,7 +100,7 @@ Actions on the page (all tabs): **Open HTML** · **Reveal folder**.
 | **T** | Task / Bug / other non-story, non-sub-task | Distinct “task” color |
 | **✗** | Sub-task worklogs (not allowed) | Warning / “shouldn’t log here” color |
 
-Legend visible on the tab. Cell click → drawer with ticket keys + hours (by type).
+Legend visible on the tab. Day cells show ticket chips as `KEY (Xh)`; no side drawer. Below the matrix: **Missing weekdays** (Person | days with 0h story+task; leave exclusion later).
 
 **Sub-task hours:** shown in Combined (**✗**) **and** listed under Fix-ups (A).
 
@@ -109,6 +109,8 @@ Legend visible on the tab. Cell click → drawer with ticket keys + hours (by ty
 ### 3. Fix-ups (renamed from “Alerts”)
 
 **Exceptions / action queue only** — not the full unfinished backlog.
+
+Section header includes **Sprint started (IST)** once; Churn rows include **Added to sprint (IST)**.
 
 **Include only:**
 
@@ -168,7 +170,7 @@ Full Story/Task list (excluded tickets dropped).
 2. Overview chips + banner + scrollable goal + default-tab rule  
 3. Fix-ups table + empty state  
 4. Tickets table + filters  
-5. Hours Combined matrix (S/T/✗ + Remaining + Capacity + drawer)  
+5. Hours Combined matrix (S/T/✗ + Remaining + Capacity; chips with hours; missing-weekdays table)  
 6. Capsule chrome polish  
 
 ---

@@ -179,8 +179,6 @@ class ConfigPage(QWidget):
         self.next_btn.clicked.connect(self._on_next)
         self.pack_combo.currentIndexChanged.connect(self._on_pack_member_changed)
 
-        self.team_table.table.itemChanged.connect(self._refresh_combos)
-
         layout = QVBoxLayout(self)
         layout.addWidget(title)
         layout.addWidget(self.subtitle)
@@ -216,9 +214,9 @@ class ConfigPage(QWidget):
         return jira_service.ticket_keys_in_payload(self.payload)
 
     def _refresh_combos(self, *_):
-        self.leaves_table.refresh_combos()
-        self.excl_table.refresh_combos()
-        self.exticket_table.refresh_combos()
+        # Combo delegates call combo_options_provider() when an editor opens,
+        # so there is no need to recreate delegates here (that can crash PySide6).
+        pass
 
     # ── pack binding ────────────────────────────────────────────────────
 
@@ -265,11 +263,11 @@ class ConfigPage(QWidget):
     ) -> SprintConfig:
         """Build config for one sprint.
 
-        Team members are **only** people assigned on this sprint's issues
-        (plus anyone named in planned leaves — genuine leave-only cases).
+        Team = sprint assignees + planned-leave names + this sprint's saved
+        roster + teammates from related saved configs (same assignee overlap).
 
-        Older saved JSON / board roster must not invent teammates from other
-        sprints that share the same Jira board.
+        Does **not** merge a whole shared board roster (avoids cross-team noise
+        when RAIL and LMAC share one Jira board).
         """
         cfg = SprintConfig()
         cfg.sprint_name = sprint.get("name", "")
@@ -301,42 +299,50 @@ class ConfigPage(QWidget):
             for entry in (cfg.planned_leaves or [])
             if (entry.name or "").strip()
         }
+        related = config_io.team_names_from_related_sprint_configs(
+            configs_dir(), assignees
+        )
+        roster = config_io.load_board_roster(configs_dir(), board_id)
+        hints = {m.name: m for m in roster}
+
+        def member_for(name: str) -> TeamMember:
+            if name in preserved:
+                return preserved[name]
+            if name in hints:
+                h = hints[name]
+                return TeamMember(name=name, role=h.role or "Developer", included=bool(h.included))
+            return TeamMember(name=name, role="Developer", included=True)
 
         team: list[TeamMember] = []
+        seen: set[str] = set()
         for name in assignees:
-            if name in preserved:
-                team.append(preserved[name])
-            else:
-                team.append(TeamMember(name=name, role="Developer", included=True))
-        # True leave-only: named in planned leaves but not on tickets this sprint.
+            team.append(member_for(name))
+            seen.add(name)
         for name in leave_names:
-            if name in assignee_set:
+            if name in seen:
                 continue
-            if name in preserved:
-                team.append(preserved[name])
-            else:
-                team.append(TeamMember(name=name, role="Developer", included=True))
-
-        # Role / Include hints from board roster — matching names only (no adds).
-        roster = config_io.load_board_roster(configs_dir(), board_id)
-        if roster:
-            hints = {m.name: m for m in roster}
-            for member in team:
-                hint = hints.get(member.name)
-                if hint is None:
-                    continue
-                if member.name not in preserved:
-                    member.role = hint.role or member.role
-                    member.included = bool(hint.included)
+            team.append(member_for(name))
+            seen.add(name)
+        for name in sorted(preserved):
+            if name in seen:
+                continue
+            team.append(preserved[name])
+            seen.add(name)
+        for name in sorted(related):
+            if name in seen:
+                continue
+            team.append(member_for(name))
+            seen.add(name)
 
         cfg.team_members = team
         log.info(
             "build_config_from_payload %s: %d assignees → %d team members "
-            "(ignored %d extras from saved config)",
+            "(%d from saved sprint, %d from related configs)",
             cfg.sprint_name,
             len(assignees),
             len(team),
-            max(0, len(preserved) - len(assignee_set & set(preserved))),
+            len(preserved),
+            len(related),
         )
         return cfg
 
@@ -362,40 +368,40 @@ class ConfigPage(QWidget):
         if prev.sprint_name:
             fresh.sprint_name = prev.sprint_name
 
-        # Re-apply leave-only from session planned_leaves (in case leaves edited).
         leave_names = {
             (entry.name or "").strip()
             for entry in (fresh.planned_leaves or [])
             if (entry.name or "").strip()
         }
-        assignees = set(jira_service.assignees_in_payload(slot.payload))
         prev_by = {m.name: m for m in prev.team_members}
         by_name = {m.name: m for m in fresh.team_members}
         for name in leave_names:
-            if name in by_name or name in assignees:
+            if name in by_name:
                 continue
             old = prev_by.get(name)
             by_name[name] = old or TeamMember(
                 name=name, role="Developer", included=True
             )
-
-        # Prefer role/Include from the session for names that belong on this sprint.
-        final: list[TeamMember] = []
-        for member in by_name.values():
-            old = prev_by.get(member.name)
-            if old is not None and member.name in assignees | leave_names:
-                final.append(
-                    TeamMember(name=member.name, role=old.role, included=old.included)
+        # Keep everyone the user added or edited this session (incl. no-ticket).
+        for old in prev.team_members:
+            if old.name in by_name:
+                by_name[old.name] = TeamMember(
+                    name=old.name, role=old.role, included=old.included
                 )
-            elif member.name in assignees | leave_names:
-                final.append(member)
-        # Stable order: assignees first (payload order), then leave-only.
+            else:
+                by_name[old.name] = old
+
         order = list(jira_service.assignees_in_payload(slot.payload))
         for name in leave_names:
             if name not in order:
                 order.append(name)
-        by_final = {m.name: m for m in final}
-        fresh.team_members = [by_final[n] for n in order if n in by_final]
+        for old in prev.team_members:
+            if old.name not in order:
+                order.append(old.name)
+        for name in sorted(by_name):
+            if name not in order:
+                order.append(name)
+        fresh.team_members = [by_name[n] for n in order if n in by_name]
         slot.config = fresh
         return fresh
 
@@ -461,13 +467,6 @@ class ConfigPage(QWidget):
                  len(cfg.team_members), len(cfg.planned_leaves), len(cfg.other_exclusions))
         self.config = cfg
 
-        # Disconnect itemChanged during bulk population to avoid cascading
-        # delegate refreshes (which can crash PySide6).
-        try:
-            self.team_table.table.itemChanged.disconnect(self._refresh_combos)
-        except RuntimeError:
-            pass
-
         self.name_edit.setText(cfg.sprint_name)
         self.duration_spin.setValue(int(cfg.sprint_duration_weeks or 2))
         if cfg.report_date:
@@ -495,9 +494,6 @@ class ConfigPage(QWidget):
         self.exclticket_table.set_rows([{"key": k, "reason": ""} for k in cfg.excluded_tickets])
 
         self.cb_per_ticket.setChecked(bool(cfg.show_per_ticket_details))
-
-        # Reconnect after population is done.
-        self.team_table.table.itemChanged.connect(self._refresh_combos)
 
     def gather_config(self) -> SprintConfig:
         cfg = SprintConfig()

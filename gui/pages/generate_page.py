@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSplitter,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -171,16 +170,11 @@ class GeneratePage(QWidget):
             f'padding:2px 6px; border-radius:3px;"><b>Task / bug</b></span> &nbsp; '
             f'<span style="background:{sub_bg}; color:{sub_fg}; '
             f'padding:2px 6px; border-radius:3px;"><b>Sub-task ✗</b></span> '
-            "· Each day lists ticket keys · click a cell for hours"
+            "· Each day lists ticket keys with hours logged"
         )
         self.tickets_note.setStyleSheet(f"color: {c['muted']};")
         self.kpis_intro.setStyleSheet(f"color: {c['muted']};")
         self._style_report_tables()
-        t = table_style_tokens()
-        self.hours_drawer.setStyleSheet(
-            f"QTextEdit {{ background: {t['surface']}; color: {t['text']}; "
-            f"border: 1px solid {t['border']}; border-radius: 12px; padding: 8px; }}"
-        )
         if self.view_models:
             self._populate_review(self.view_models)
 
@@ -252,19 +246,8 @@ class GeneratePage(QWidget):
         self.hours_legend.setTextFormat(Qt.TextFormat.RichText)
         self.hours_legend.setWordWrap(True)
         lay.addWidget(self.hours_legend)
-
-        split = QSplitter(Qt.Orientation.Horizontal)
         host, self.hours_sections = self._make_scroll_host()
-        split.addWidget(host)
-
-        self.hours_drawer = QTextEdit()
-        self.hours_drawer.setReadOnly(True)
-        self.hours_drawer.setPlaceholderText("Select a day cell to see ticket keys.")
-        self.hours_drawer.setMinimumWidth(220)
-        split.addWidget(self.hours_drawer)
-        split.setStretchFactor(0, 4)
-        split.setStretchFactor(1, 1)
-        lay.addWidget(split, stretch=1)
+        lay.addWidget(host, stretch=1)
         return w
 
     def _build_fixups(self) -> QWidget:
@@ -697,11 +680,12 @@ class GeneratePage(QWidget):
         shown = entries[:_MAX_TICKETS_IN_CELL]
         for key, bucket, hrs in shown:
             bg, fg = chips.get(bucket, chips["task"])
-            chip = QLabel(key)
+            label = f"{key} ({hrs:.1f}h)"
+            chip = QLabel(label)
             chip.setFont(chip_font)
             chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
             chip.setToolTip(f"{hrs:.1f}h · {bucket}")
-            text_w = fm.boundingRect(key).width()
+            text_w = fm.boundingRect(label).width()
             chip.setMinimumWidth(text_w + 18)
             chip.setMinimumHeight(fm.height() + 10)
             chip.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
@@ -731,9 +715,6 @@ class GeneratePage(QWidget):
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         table.setTextElideMode(Qt.TextElideMode.ElideNone)
-        table.cellClicked.connect(
-            lambda r, c, v=vm: self._on_hours_cell(r, c, v)
-        )
 
         dates = vm.display_dates
         cols = 1 + len(dates) + 3
@@ -824,7 +805,7 @@ class GeneratePage(QWidget):
             table,
             stretch=[],
             mins={
-                **{1 + i: 128 for i in range(n_dates)},
+                **{1 + i: 148 for i in range(n_dates)},
                 0: 100,
                 1 + n_dates: 88,
                 2 + n_dates: 100,
@@ -832,37 +813,40 @@ class GeneratePage(QWidget):
             },
             slack=16,
         )
-        # Give the table a sensible vertical size for scroll stacking.
         table.setMinimumHeight(min(420, 56 + table.rowCount() * 48))
         lay.addWidget(table)
-        self.hours_sections.addWidget(section)
 
-    def _on_hours_cell(self, row: int, col: int, vm: ReportViewModel) -> None:
-        if row < 0 or row >= len(vm.hours_rows):
-            return
-        dates = vm.display_dates
-        if col < 1 or col > len(dates):
-            self.hours_drawer.setPlainText("Select a weekday cell to see ticket keys.")
-            return
-        person = vm.hours_rows[row]
-        d = dates[col - 1]
-        detail = person.ticket_detail.get(d, {})
-        lines = [f"{person.name} — {d.strftime('%b %d, %Y')}", ""]
-        for bucket, title in (
-            ("story", "Stories (S)"),
-            ("task", "Tasks (T)"),
-            ("subtask", "Sub-tasks ✗ (not allowed)"),
-        ):
-            items = detail.get(bucket) or {}
-            if not items:
-                continue
-            lines.append(title)
-            for key, hrs in sorted(items.items(), key=lambda x: (-x[1], x[0])):
-                lines.append(f"  • {key}  {hrs:.1f}h")
-            lines.append("")
-        if len(lines) <= 2:
-            lines.append("(No ticket-level hours this day.)")
-        self.hours_drawer.setPlainText("\n".join(lines))
+        # Missing weekdays (0h story+task) — leave-day exclusion later.
+        miss_title = QLabel("Missing weekdays (no story/task hours logged)")
+        miss_title.setStyleSheet("font-weight: 600;")
+        lay.addWidget(miss_title)
+        if not vm.missing_log_days:
+            empty = QLabel("No missing weekdays — everyone logged on each weekday.")
+            empty.setStyleSheet(f"color: {theme_colors()['muted']};")
+            empty.setWordWrap(True)
+            lay.addWidget(empty)
+        else:
+            miss = self._register_table(QTableWidget())
+            miss.setColumnCount(2)
+            miss.setHorizontalHeaderLabels(["Person", "Missing weekdays"])
+            miss.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            miss.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            miss.setTextElideMode(Qt.TextElideMode.ElideNone)
+            miss.setWordWrap(False)
+            miss.setRowCount(len(vm.missing_log_days))
+            for i, row in enumerate(vm.missing_log_days):
+                name_it = QTableWidgetItem(row.name)
+                font = QFont()
+                font.setBold(True)
+                name_it.setFont(font)
+                miss.setItem(i, 0, name_it)
+                miss.setItem(i, 1, QTableWidgetItem(row.missing_labels))
+                miss.setRowHeight(i, 36)
+            self._fit_table_columns(miss, stretch=[1], mins={0: 120}, slack=16)
+            miss.setMinimumHeight(min(280, 48 + miss.rowCount() * 36))
+            lay.addWidget(miss)
+
+        self.hours_sections.addWidget(section)
 
     def _severity_pill(self, severity: str) -> QWidget:
         t = table_style_tokens()
@@ -904,6 +888,13 @@ class GeneratePage(QWidget):
         lay.setSpacing(8)
         lay.addWidget(self._section_header(label))
 
+        start_line = QLabel(
+            f"Sprint started (IST): <b>{vm.sprint_started_ist or '—'}</b>"
+        )
+        start_line.setTextFormat(Qt.TextFormat.RichText)
+        start_line.setStyleSheet(f"color: {c['muted']};")
+        lay.addWidget(start_line)
+
         if vm.fixup_count == 0:
             empty = QLabel(
                 "<b>No fix-ups — sprint looks clean.</b><br>"
@@ -919,9 +910,17 @@ class GeneratePage(QWidget):
             return
 
         table = self._register_table(QTableWidget())
-        table.setColumnCount(6)
+        table.setColumnCount(7)
         table.setHorizontalHeaderLabels(
-            ["Severity", "Type", "Key", "Person", "Summary", "Why / what to do"]
+            [
+                "Severity",
+                "Type",
+                "Key",
+                "Person",
+                "Summary",
+                "Added to sprint (IST)",
+                "Why / what to do",
+            ]
         )
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -946,18 +945,23 @@ class GeneratePage(QWidget):
             key_item.setFont(font)
             person_item = QTableWidgetItem(f.person)
             summary_item = QTableWidgetItem(f.summary)
+            added = (f.added_to_sprint_ist or "").strip() or "—"
+            added_item = QTableWidgetItem(added)
+            if added == "—":
+                added_item.setForeground(muted)
             action_item = QTableWidgetItem(f.action)
             action_item.setForeground(muted)
             table.setItem(i, 1, type_item)
             table.setItem(i, 2, key_item)
             table.setItem(i, 3, person_item)
             table.setItem(i, 4, summary_item)
-            table.setItem(i, 5, action_item)
+            table.setItem(i, 5, added_item)
+            table.setItem(i, 6, action_item)
             table.setRowHeight(i, 44)
         self._fit_table_columns(
             table,
-            stretch=[4, 5],
-            mins={0: 88, 1: 140, 2: 120, 3: 100},
+            stretch=[4, 6],
+            mins={0: 88, 1: 140, 2: 120, 3: 100, 5: 160},
             slack=18,
         )
         table.setMinimumHeight(min(360, 48 + table.rowCount() * 48))

@@ -191,6 +191,7 @@ class EditableTable(QWidget):
     def add_row(self, values: dict | None = None) -> None:
         values = values or {}
         r = self.table.rowCount()
+        self.table.blockSignals(True)
         self.table.insertRow(r)
         for c, col in enumerate(self.columns):
             if col.kind == "checkbox":
@@ -208,6 +209,7 @@ class EditableTable(QWidget):
                 if col.kind == "text" and col.placeholder and not v:
                     item.setForeground(Qt.gray)
                 self.table.setItem(r, c, item)
+        self.table.blockSignals(False)
 
     def _remove_selected(self) -> None:
         selected = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)

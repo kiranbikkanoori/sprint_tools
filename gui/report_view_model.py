@@ -17,7 +17,7 @@ from report_generator import (
     build_kpi_summary,
     build_ticket_rows,
 )
-from utils import working_dates_in_range
+from utils import format_jira_datetime_ist, working_dates_in_range
 
 
 @dataclass
@@ -60,6 +60,7 @@ class FixUpRow:
     person: str
     summary: str
     action: str
+    added_to_sprint_ist: str = ""  # Churn only; blank for other types
 
 
 @dataclass
@@ -80,8 +81,16 @@ class HoursPersonRow:
     logged: float = 0.0
     remaining: float = 0.0
     capacity: float = 0.0
-    # date -> bucket -> key -> hours (for drawer)
+    # date -> bucket -> key -> hours (shown on day-cell chips)
     ticket_detail: dict[date, dict[str, dict[str, float]]] = field(default_factory=dict)
+
+
+@dataclass
+class MissingLogRow:
+    """Person with weekdays that have 0h story+task logged (leave exclusion later)."""
+
+    name: str
+    missing_labels: str  # e.g. "May 27, Jun 03"
 
 
 @dataclass
@@ -107,11 +116,13 @@ class ReportViewModel:
     fixup_count: int
     fixups: list[FixUpRow]
     hours_rows: list[HoursPersonRow]
+    missing_log_days: list[MissingLogRow]
     tickets: list[TicketViewRow]
     kpi_rows: list[KpiViewRow]
     completion_team: list[CompletionTeamMetric]
     completion_people: list[CompletionPersonRow]
     default_tab: str  # "fixups" | "overview"
+    sprint_started_ist: str = ""
 
 
 def _pct(p: float | None) -> str:
@@ -217,6 +228,7 @@ def build_report_view_model(
                 person=row.assignee,
                 summary=row.summary[:80],
                 action="Added after sprint start — confirm scope with the team.",
+                added_to_sprint_ist=row.added_to_sprint_ist or "—",
             )
         )
 
@@ -229,9 +241,9 @@ def build_report_view_model(
                     key=r.key,
                     person=r.assignee,
                     summary=r.summary[:80],
-                action="Done/Resolved but remaining > 0 — clear remaining or reopen.",
+                    action="Done/Resolved but remaining > 0 — clear remaining or reopen.",
+                )
             )
-        )
 
     for e in work_report.errors_child_remaining:
         fixups.append(
@@ -297,6 +309,21 @@ def build_report_view_model(
             )
         )
 
+    # Weekdays with 0h story+task logged (planned-leave exclusion later).
+    missing_log_days: list[MissingLogRow] = []
+    for row in hours_rows:
+        missing: list[str] = []
+        for d in display_dates:
+            cell = row.days.get(d)
+            story = cell.story if cell else 0.0
+            task = cell.task if cell else 0.0
+            if story + task < 1e-6:
+                missing.append(d.strftime("%b %d"))
+        if missing:
+            missing_log_days.append(
+                MissingLogRow(name=row.name, missing_labels=", ".join(missing))
+            )
+
     tickets = [
         TicketViewRow(
             key=r.key,
@@ -351,6 +378,11 @@ def build_report_view_model(
         for r in tc.rows
     ]
 
+    if churn_rows:
+        sprint_started_ist = churn_rows[0].sprint_started_ist
+    else:
+        sprint_started_ist = format_jira_datetime_ist(sprint_start_raw)
+
     return ReportViewModel(
         sprint_name=config.sprint_name or sprint_info.get("name", ""),
         sprint_goal=sprint_goal,
@@ -359,9 +391,11 @@ def build_report_view_model(
         fixup_count=len(fixups),
         fixups=fixups,
         hours_rows=hours_rows,
+        missing_log_days=missing_log_days,
         tickets=tickets,
         kpi_rows=kpi_rows,
         completion_team=completion_team,
         completion_people=completion_people,
         default_tab="fixups" if fixups else "overview",
+        sprint_started_ist=sprint_started_ist,
     )

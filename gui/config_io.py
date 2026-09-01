@@ -181,6 +181,36 @@ def load_recent_team_fallback(configs_root: Path) -> list[TeamMember]:
     return []
 
 
+def team_names_from_related_sprint_configs(
+    configs_root: Path, assignees: list[str]
+) -> set[str]:
+    """
+    Names from saved sprint configs whose team overlaps current assignees.
+
+    Used to carry leave-only / no-ticket teammates across sprints on the same
+    board without merging an entire shared board roster (which can pull in
+    people from unrelated teams that use the same Jira board).
+    """
+    anchor = {(a or "").strip() for a in assignees if (a or "").strip()}
+    if not anchor:
+        return set()
+    root = Path(configs_root)
+    if not root.is_dir():
+        return set()
+    names: set[str] = set()
+    for path in root.glob("*.json"):
+        if path.name.startswith("board_"):
+            continue
+        try:
+            cfg = load_json(path)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            continue
+        cfg_names = {(m.name or "").strip() for m in cfg.team_members if (m.name or "").strip()}
+        if cfg_names & anchor:
+            names |= cfg_names
+    return names
+
+
 def merge_team_members(*groups: list[TeamMember]) -> list[TeamMember]:
     """
     Merge team lists in priority order: earlier groups win on name collision
