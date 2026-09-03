@@ -37,6 +37,7 @@ from config_parser import (
 from gui import config_io, jira_service
 from gui.settings import AppSettings, configs_dir
 from gui.widgets.editable_table import Column, EditableTable
+from utils import parse_iso_date
 
 
 class ConfigPage(QWidget):
@@ -206,18 +207,21 @@ class ConfigPage(QWidget):
     def populate_from_payload(self, payload: dict, sprint: dict) -> None:
         log.info("ConfigPage.populate_from_payload: sprint=%s", sprint.get("name"))
         self.payload = payload
+        sd = parse_iso_date(sprint.get("startDate"))
+        ed = parse_iso_date(sprint.get("endDate"))
         self.subtitle.setText(
             f"Sprint loaded: <b>{sprint.get('name', '')}</b> "
-            f"({(sprint.get('startDate') or '')[:10]} → {(sprint.get('endDate') or '')[:10]}) — "
+            f"({sd.isoformat() if sd else 'N/A'} → {ed.isoformat() if ed else 'N/A'}) — "
             f"{len(payload.get('issues', []))} issues."
         )
         cfg = SprintConfig()
         cfg.sprint_name = sprint.get("name", "")
         try:
-            sd = date.fromisoformat((sprint.get("startDate") or "")[:10])
-            ed = date.fromisoformat((sprint.get("endDate") or "")[:10])
-            weeks = max(1, round((ed - sd).days / 7))
-            cfg.sprint_duration_weeks = int(weeks)
+            if sd is not None and ed is not None:
+                weeks = max(1, round((ed - sd).days / 7))
+                cfg.sprint_duration_weeks = int(weeks)
+            else:
+                cfg.sprint_duration_weeks = 2
         except Exception:
             cfg.sprint_duration_weeks = 2
 
@@ -263,8 +267,11 @@ class ConfigPage(QWidget):
         self.duration_spin.setValue(int(cfg.sprint_duration_weeks or 2))
         if cfg.report_date:
             try:
-                d = date.fromisoformat(cfg.report_date)
-                self.report_date.setDate(QDate(d.year, d.month, d.day))
+                d = parse_iso_date(cfg.report_date)
+                if d is not None:
+                    self.report_date.setDate(QDate(d.year, d.month, d.day))
+                else:
+                    self.report_date.setDate(QDate.currentDate())
             except Exception:  # noqa: BLE001
                 self.report_date.setDate(QDate.currentDate())
         else:

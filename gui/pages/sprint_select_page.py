@@ -189,10 +189,12 @@ class SprintSelectPage(QWidget):
             self.load_btn.setEnabled(False)
             return
         s = self._sprints[idx]
+        start = (s.get("startDate") or "").strip()
+        end = (s.get("endDate") or "").strip()
         meta = (
             f"State: {s.get('state', '?')}  •  "
-            f"Start: {(s.get('startDate') or '—')[:10]}  •  "
-            f"End: {(s.get('endDate') or '—')[:10]}"
+            f"Start: {start[:10] if start else 'N/A'}  •  "
+            f"End: {end[:10] if end else 'N/A'}"
         )
         self.sprint_meta.setText(meta)
         self.load_btn.setEnabled(True)

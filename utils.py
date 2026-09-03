@@ -267,21 +267,38 @@ def normalize_stored_issue_type(stored: str | None) -> str:
     return t
 
 
+def parse_iso_date(raw: str | date | None) -> date | None:
+    """
+    Parse a calendar date from ``YYYY-MM-DD`` or a longer ISO/Jira timestamp.
+    Returns ``None`` when missing or invalid (never raises).
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    s = str(raw).strip()
+    if not s or s.lower() in ("none", "null"):
+        return None
+    # Prefer full datetime parse when a time component is present.
+    if "T" in s or len(s) > 10:
+        dt = parse_jira_datetime(s)
+        if dt is not None:
+            return dt.date()
+    day = s[:10]
+    if len(day) < 10:
+        return None
+    try:
+        return date.fromisoformat(day)
+    except ValueError:
+        return None
+
+
 def worklog_started_date(wl: dict) -> date | None:
     """
     Parse YYYY-MM-DD from a worklog's ``started`` field.
     Returns None if missing or invalid (skips bad Jira/MCP rows safely).
     """
-    raw = wl.get("started")
-    if not raw:
-        return None
-    s = str(raw).strip()[:10]
-    if len(s) < 10:
-        return None
-    try:
-        return date.fromisoformat(s)
-    except ValueError:
-        return None
+    return parse_iso_date(wl.get("started"))
 
 
 def parse_jira_datetime(raw: str | None) -> datetime | None:
@@ -300,7 +317,10 @@ def parse_jira_datetime(raw: str | None) -> datetime | None:
         except ValueError:
             continue
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except ValueError:
         pass
     if len(s) >= 10:
@@ -369,16 +389,26 @@ def derive_issue_added_to_sprint(
             "added_after_sprint_start": False,
         }
 
-    if isinstance(sprint_start, str):
-        sprint_start_dt = parse_jira_datetime(sprint_start)
-        if sprint_start_dt is None:
-            sprint_start_dt = datetime.combine(
-                date.fromisoformat(str(sprint_start)[:10]),
-                time.min,
-                tzinfo=timezone.utc,
-            )
-    else:
+    # Missing/invalid sprint start (common for future sprints) → keep the
+    # added-at timestamp but do not flag mid-sprint churn.
+    if isinstance(sprint_start, datetime):
+        sprint_start_dt = sprint_start
+    elif isinstance(sprint_start, date):
         sprint_start_dt = datetime.combine(sprint_start, time.min, tzinfo=timezone.utc)
+    else:
+        sprint_start_dt = parse_jira_datetime(str(sprint_start) if sprint_start is not None else None)
+        if sprint_start_dt is None:
+            d = parse_iso_date(sprint_start)
+            if d is None:
+                return {
+                    "added_to_sprint_at": added_at.isoformat(),
+                    "added_after_sprint_start": False,
+                }
+            sprint_start_dt = datetime.combine(d, time.min, tzinfo=timezone.utc)
+    if sprint_start_dt.tzinfo is None:
+        sprint_start_dt = sprint_start_dt.replace(tzinfo=timezone.utc)
+    if added_at.tzinfo is None:
+        added_at = added_at.replace(tzinfo=timezone.utc)
     return {
         "added_to_sprint_at": added_at.isoformat(),
         "added_after_sprint_start": added_at > sprint_start_dt,

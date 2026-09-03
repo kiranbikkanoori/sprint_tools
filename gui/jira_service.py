@@ -25,6 +25,7 @@ from fetch_sprint_data import (
     find_board,
     find_sprint,
 )
+from utils import parse_iso_date
 
 
 class JiraConfigError(RuntimeError):
@@ -92,9 +93,11 @@ def fetch_sprint_payload(
     sprint_id = sprint["id"]
     sprint_name = sprint.get("name", "")
     sprint_start_raw = sprint.get("startDate") or ""
-    start_date = sprint_start_raw[:10]
     sprint_end_raw = sprint.get("endDate") or ""
-    end_date = sprint_end_raw[:10]
+    start_parsed = parse_iso_date(sprint_start_raw)
+    end_parsed = parse_iso_date(sprint_end_raw)
+    start_date = start_parsed.isoformat() if start_parsed else ""
+    end_date = end_parsed.isoformat() if end_parsed else ""
     goal = sprint.get("goal", "") or ""
 
     if progress_cb:

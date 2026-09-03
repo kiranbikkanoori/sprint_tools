@@ -9,15 +9,65 @@ can call it directly.
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config_parser import SprintConfig
-from utils import effective_issue_type
-from report_generator import build_sprint_work_report, generate_text_report
+from utils import effective_issue_type, parse_iso_date
+from report_generator import (
+    build_sprint_work_report,
+    generate_text_report,
+    is_planning_mode,
+)
 from report_html import generate_html_report
+
+
+def _resolve_sprint_dates(
+    sprint_info: dict,
+    *,
+    weeks: int,
+    report_date: date,
+) -> tuple[date, date, str, str, bool]:
+    """
+    Return (start, end, start_label, end_label, planning_mode).
+
+    Planning mode: real start missing or start > report_date. Labels show N/A
+    or the real future dates; worklogs are not counted by the caller.
+    """
+    start = parse_iso_date(sprint_info.get("start_date") or sprint_info.get("start_datetime"))
+    end = parse_iso_date(sprint_info.get("end_date") or sprint_info.get("end_datetime"))
+    start_label = start.strftime("%b %d, %Y") if start else "N/A"
+    end_label = end.strftime("%b %d, %Y") if end else "N/A"
+    planning = is_planning_mode(start, report_date)
+
+    weeks = max(1, int(weeks or 2))
+    span_days = weeks * 7 - 1
+
+    if planning:
+        # Placeholder window only (worklogs skipped). Prefer declared dates.
+        if start is None and end is None:
+            start = end = report_date
+        elif start is None:
+            start = end - timedelta(days=span_days)
+        elif end is None:
+            end = start + timedelta(days=span_days)
+        if start > end:
+            start, end = end, start
+        return start, end, start_label, end_label, True
+
+    # Active / closed sprint: fill any single missing bound for computation.
+    if end is None and start is None:
+        end = report_date
+        start = end - timedelta(days=span_days)
+    elif end is None:
+        end = max(start + timedelta(days=span_days), report_date)
+    elif start is None:
+        start = end - timedelta(days=span_days)
+    if start > end:
+        start, end = end, start
+    return start, end, start_label, end_label, False
 
 
 def generate_outputs(
@@ -38,26 +88,32 @@ def generate_outputs(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     sprint_info = payload["sprint"]
-    sprint_start = date.fromisoformat(sprint_info["start_date"])
-    sprint_end = date.fromisoformat(sprint_info["end_date"])
-    sprint_goal = sprint_info.get("goal", "")
-    report_date = (
-        date.fromisoformat(config.report_date) if config.report_date else date.today()
+    report_date = parse_iso_date(config.report_date) or date.today()
+    sprint_start, sprint_end, start_label, end_label, planning = _resolve_sprint_dates(
+        sprint_info,
+        weeks=int(config.sprint_duration_weeks or 2),
+        report_date=report_date,
     )
+    sprint_goal = sprint_info.get("goal", "")
 
     issues = payload["issues"]
     worklogs = payload["worklogs"]
 
     work_report = build_sprint_work_report(
-        config, sprint_start, sprint_end, issues, worklogs, report_date=report_date,
+        config,
+        sprint_start,
+        sprint_end,
+        issues,
+        worklogs,
+        report_date=report_date,
+        count_worklogs=not planning,
     )
 
     safe_name = (config.sprint_name or sprint_info.get("name", "sprint")).replace(" ", "_")
     written: dict[str, Path] = {}
-    chart_path: Path | None = None
 
-    # Chart first so the HTML report can embed it when both are requested.
-    if make_chart:
+    # Chart only when the sprint has a real worklog window.
+    if make_chart and not planning:
         from burndown_chart import generate_burndown_chart
 
         excluded = set(config.excluded_tickets)
@@ -80,29 +136,43 @@ def generate_outputs(
             worklogs=chart_worklogs,
             report_date=report_date,
             output_path=chart_path,
+            start_label=start_label,
+            end_label=end_label,
         )
         written["chart"] = chart_path
 
     if make_report:
         sprint_start_raw = sprint_info.get("start_datetime") or sprint_info.get("start_date")
         text = generate_text_report(
-            config, sprint_start, sprint_end, work_report,
+            config,
+            sprint_start,
+            sprint_end,
+            work_report,
             sprint_goal=sprint_goal,
             issues=issues,
             sprint_start_raw=sprint_start_raw,
+            start_label=start_label,
+            end_label=end_label,
+            planning_mode=planning,
         )
         md_path = output_dir / f"sprint_report_{safe_name}.md"
         md_path.write_text(text, encoding="utf-8")
         written["report"] = md_path
 
         html = generate_html_report(
-            config, sprint_start, sprint_end, work_report,
+            config,
+            sprint_start,
+            sprint_end,
+            work_report,
             sprint_goal=sprint_goal,
             issues=issues,
             sprint_start_raw=sprint_start_raw,
             chart_path=None,
             theme=None,
             include_theme_toggle=True,
+            start_label=start_label,
+            end_label=end_label,
+            planning_mode=planning,
         )
         html_path = output_dir / f"sprint_report_{safe_name}.html"
         html_path.write_text(html, encoding="utf-8")

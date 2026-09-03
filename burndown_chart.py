@@ -69,6 +69,8 @@ def generate_burndown_chart(
     *,
     total_planned_hours: float | None = None,
     total_remaining_hours: float | None = None,
+    start_label: str | None = None,
+    end_label: str | None = None,
 ) -> Path:
     """
     Save a PNG with stacked daily logged hours (Story + Task issue worklogs only).
@@ -113,10 +115,12 @@ def generate_burndown_chart(
             today_idx = i
             break
 
+    start_txt = start_label or sprint_start.strftime("%b %d")
+    end_txt = end_label or sprint_end.strftime("%b %d, %Y")
     fig, ax = plt.subplots(1, 1, figsize=(max(12, n_days * 1.2), 6))
     fig.suptitle(
         f"Sprint work logged: {sprint_name}\n"
-        f"({sprint_start.strftime('%b %d')} \u2013 {sprint_end.strftime('%b %d, %Y')})",
+        f"({start_txt} \u2013 {end_txt})",
         fontsize=15,
         fontweight="bold",
         y=0.99,

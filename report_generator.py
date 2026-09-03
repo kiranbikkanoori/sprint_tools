@@ -21,6 +21,17 @@ from utils import (
     working_dates_in_range,
 )
 
+# Shown in KPI / completion cells when the sprint has not started yet.
+REASON_NOT_STARTED = "Sprint has not started yet"
+
+
+def is_planning_mode(sprint_start: date | None, as_of: date | None = None) -> bool:
+    """True when start is missing or still in the future relative to ``as_of``."""
+    as_of = as_of or date.today()
+    if sprint_start is None:
+        return True
+    return sprint_start > as_of
+
 
 @dataclass
 class ChildRemainingError:
@@ -172,6 +183,8 @@ def build_sprint_work_report(
     issues: list[dict],
     worklogs: dict[str, list[dict]],
     report_date: date | None = None,
+    *,
+    count_worklogs: bool = True,
 ) -> SprintWorkReport:
     """
     Build daily story/task hours for included members, and sub-task validation errors.
@@ -181,6 +194,9 @@ def build_sprint_work_report(
 
     Sub-task worklog errors use the same date window. Only included authors count toward
     story/task totals; sub-task error lists include all authors.
+
+    When ``count_worklogs`` is False (planning / not-started sprint), remaining-on-subtask
+    validation still runs, but no worklogs are attributed to any day.
     """
     excluded = set(config.excluded_tickets)
     included = [m.name for m in config.team_members if m.included]
@@ -218,6 +234,9 @@ def build_sprint_work_report(
                     remaining_hours=rem,
                 )
             )
+
+        if not count_worklogs:
+            continue
 
         wl_list = worklogs.get(key, [])
         if itype == "Sub-task":
@@ -290,6 +309,27 @@ def build_sprint_work_report(
         errors_child_remaining=sorted(errors_remaining, key=lambda e: e.key),
         errors_child_worklogs=errors_wl,
     )
+
+
+def build_capacity_hours_by_person(
+    config: SprintConfig,
+    included_names: list[str],
+) -> dict[str, float]:
+    """Full-sprint capacity hours: (work days − meeting − leave) × 8 − other exclusions."""
+    work_days = float(config.sprint_duration_weeks) * 5.0
+    meeting_days = float(config.meeting_days_reserved or 0.0)
+    leaves_by_name: dict[str, float] = defaultdict(float)
+    for entry in config.planned_leaves:
+        leaves_by_name[entry.name] += float(entry.days)
+    excl_by_name: dict[str, float] = defaultdict(float)
+    for entry in config.other_exclusions:
+        excl_by_name[entry.name] += float(entry.hours)
+    out: dict[str, float] = {}
+    for name in included_names:
+        leave_d = leaves_by_name.get(name, 0.0)
+        eff_d = max(0.0, work_days - meeting_days - leave_d)
+        out[name] = max(0.0, eff_d * 8.0 - excl_by_name.get(name, 0.0))
+    return out
 
 
 def build_effective_days_by_person(
@@ -475,12 +515,14 @@ def build_kpi_summary(
     config: SprintConfig,
     issues: list[dict],
     team_completion: TeamCompletion,
+    *,
+    planning_mode: bool = False,
 ) -> list[KpiSummaryRow]:
     excluded = set(config.excluded_tickets)
 
     backlog_churn_available = any("added_after_sprint_start" in i for i in issues)
     backlog_churn_count = 0
-    if backlog_churn_available:
+    if backlog_churn_available and not planning_mode:
         for issue in issues:
             if issue.get("key") in excluded:
                 continue
@@ -495,10 +537,21 @@ def build_kpi_summary(
     def _vel(v: float | None) -> str:
         return "N/A" if v is None else f"{v:.2f}"
 
+    if planning_mode:
+        completion_val = REASON_NOT_STARTED
+        velocity_val = REASON_NOT_STARTED
+        churn_val = REASON_NOT_STARTED
+        churn_notes = "Requires a started sprint"
+    else:
+        completion_val = _pct(team_completion.ticket_pct)
+        velocity_val = _vel(team_completion.velocity)
+        churn_val = str(backlog_churn_count) if backlog_churn_available else "N/A"
+        churn_notes = "Tickets added after sprint start"
+
     rows = [
         KpiSummaryRow(
             "Sprint completion rate",
-            _pct(team_completion.ticket_pct),
+            completion_val,
             "Completed tickets / accepted tickets (Stories + Tasks only)",
         ),
         KpiSummaryRow("Participation rate", "N/A", "Not implemented"),
@@ -507,14 +560,14 @@ def build_kpi_summary(
         KpiSummaryRow("Jira hygiene score", "N/A", "Not implemented"),
         KpiSummaryRow(
             "Sprint velocity",
-            _vel(team_completion.velocity),
+            velocity_val,
             "Completed story points / effective man-days",
         ),
         KpiSummaryRow("Repetition of similar issue", "N/A", "Not implemented"),
         KpiSummaryRow(
             "Scope stability & backlog churn",
-            str(backlog_churn_count) if backlog_churn_available else "N/A",
-            "Tickets added after sprint start",
+            churn_val,
+            churn_notes,
         ),
         KpiSummaryRow(
             "Number of tickets",
@@ -626,54 +679,85 @@ def generate_text_report(
     *,
     issues: list[dict] | None = None,
     sprint_start_raw: str | None = None,
+    start_label: str | None = None,
+    end_label: str | None = None,
+    planning_mode: bool = False,
 ) -> str:
     """
     Return markdown sprint report (story vs task logging model).
 
-    When ``issues`` is provided, the KPI summary plus ticket-based completion
-    sections are included. Pass ``None`` to suppress them (kept for backward-compat
-    with any older caller that doesn't have the issues list at hand).
+    ``planning_mode`` — sprint not started yet: Remaining + Capacity only; KPI /
+    completion rates explain why instead of inventing worklog windows.
     """
     all_dates = working_dates_in_range(sprint_start, sprint_end)
     report_cap = _log_window_end(
         sprint_end,
         date.fromisoformat(config.report_date) if config.report_date else None,
     )
-    display_dates = [d for d in all_dates if d <= report_cap]
+    display_dates = [] if planning_mode else [d for d in all_dates if d <= report_cap]
     lines: list[str] = []
 
     def ln(s: str = ""):
         lines.append(s)
 
+    start_txt = start_label or sprint_start.strftime("%b %d, %Y")
+    end_txt = end_label or sprint_end.strftime("%b %d, %Y")
     ln(f"# Sprint Report: {config.sprint_name}")
     ln()
     ln(
-        f"**Sprint Duration:** {sprint_start.strftime('%b %d, %Y')} \u2013 "
-        f"{sprint_end.strftime('%b %d, %Y')} ({config.sprint_duration_weeks} weeks)"
+        f"**Sprint Duration:** {start_txt} \u2013 "
+        f"{end_txt} ({config.sprint_duration_weeks} weeks)"
     )
     report_label = config.report_date if config.report_date else "today"
     ln(f"**Report Date:** {report_label}")
     if sprint_goal:
         ln(f"**Sprint Goal:** {sprint_goal}")
+    if planning_mode:
+        ln()
+        ln(
+            "> **Planning view** — this sprint has **not started yet**. "
+            "Worklogs are not counted. Stories/Tasks tables show **Remaining** vs "
+            "**Capacity** only. Completion rate, velocity, and backlog churn wait until "
+            "the sprint starts."
+        )
     ln()
-    report_asof_note = (
-        "If **Report Date** in the config is empty, **today’s date** is used as the cut-off, "
-        "so you can run this **mid-sprint**: only weekdays from sprint start through that date appear, "
-        "and only worklogs on those days are counted."
-    )
-    ln(
-        "> **Worklog source:** By **worklog author**, for team members with **Include in Report = Yes**. "
-        f"Columns are **weekdays** in **[{sprint_start.isoformat()}, {report_cap.isoformat()}]** "
-        f"(inclusive). {report_asof_note} "
-        "**Stories** and **non-story tasks** are in **two tables** below. "
-        "**Logged** hours come from worklogs; **Remaining (h)** is the sum of each person's "
-        "assigned Story/Task **remaining estimates** in Jira (not original estimate). "
-        "Each day cell lists **issue keys** and hours under the daily total."
-    )
-    ln()
+    if not planning_mode:
+        report_asof_note = (
+            "If **Report Date** in the config is empty, **today’s date** is used as the cut-off, "
+            "so you can run this **mid-sprint**: only weekdays from sprint start through that date appear, "
+            "and only worklogs on those days are counted."
+        )
+        ln(
+            "> **Worklog source:** By **worklog author**, for team members with **Include in Report = Yes**. "
+            f"Columns are **weekdays** in **[{sprint_start.isoformat()}, {report_cap.isoformat()}]** "
+            f"(inclusive). {report_asof_note} "
+            "**Stories** and **non-story tasks** are in **two tables** below. "
+            "**Logged** hours come from worklogs; **Remaining (h)** is the sum of each person's "
+            "assigned Story/Task **remaining estimates** in Jira (not original estimate). "
+            "Each day cell lists **issue keys** and hours under the daily total."
+        )
+        ln()
 
     rem_story = _remaining_hours_by_assignee(config, issues or [], bucket="story")
     rem_task = _remaining_hours_by_assignee(config, issues or [], bucket="task")
+    capacity = build_capacity_hours_by_person(config, work_report.included_names)
+
+    def _emit_planning_hours_table(title: str, remaining_by_name: dict[str, float]) -> None:
+        ln("---")
+        ln(title)
+        ln()
+        ln("| Person | **Remaining (h)** | **Capacity (h)** |")
+        ln("|--------|------------------:|-----------------:|")
+        team_rem = 0.0
+        team_cap = 0.0
+        for name in work_report.included_names:
+            rem_h = float(remaining_by_name.get(name, 0.0))
+            cap_h = float(capacity.get(name, 0.0))
+            team_rem += rem_h
+            team_cap += cap_h
+            ln(f"| {name} | **{rem_h:.1f}** | **{cap_h:.1f}** |")
+        ln(f"| **Team total** | **{team_rem:.1f}** | **{team_cap:.1f}** |")
+        ln()
 
     def _emit_hours_table(
         title: str,
@@ -725,30 +809,28 @@ def generate_text_report(
         ln(total_row)
         ln()
 
-    _emit_hours_table(
-        "## Stories — logged hours & remaining",
-        "story",
-        "Logged (h)",
-        rem_story,
-    )
-    _emit_hours_table(
-        "## Tasks (non-story) — logged hours & remaining",
-        "task",
-        "Logged (h)",
-        rem_task,
-    )
+    if planning_mode:
+        _emit_planning_hours_table("## Stories — remaining & capacity", rem_story)
+        _emit_planning_hours_table("## Tasks (non-story) — remaining & capacity", rem_task)
+    else:
+        _emit_hours_table("## Stories — logged hours & remaining", "story", "Logged (h)", rem_story)
+        _emit_hours_table("## Tasks (non-story) — logged hours & remaining", "task", "Logged (h)", rem_task)
 
     team_completion: TeamCompletion | None = None
     if issues is not None:
         effective_days_by_name = build_effective_days_by_person(config, work_report)
         team_completion = build_completion_velocity(config, issues, effective_days_by_name)
-        kpi_rows = build_kpi_summary(config, issues, team_completion)
-        churn_rows = build_backlog_churn_rows(config, issues, sprint_start_raw)
+        kpi_rows = build_kpi_summary(
+            config, issues, team_completion, planning_mode=planning_mode
+        )
+        churn_rows = (
+            [] if planning_mode else build_backlog_churn_rows(config, issues, sprint_start_raw)
+        )
         ln("---")
         ln("## Sprint KPI Summary")
         ln()
         ln("| KPI | Value | Notes |")
-        ln("|-----|------:|-------|")
+        ln("|-----|:------|-------|")
         for row in kpi_rows:
             ln(f"| {row.label} | {row.value} | {row.notes} |")
         ln()
@@ -771,7 +853,6 @@ def generate_text_report(
                 )
             ln()
 
-    # ── Validation errors ───────────────────────────────────────────────
     ln("---")
     ln("## Validation: Sub-tasks With Remaining Work")
     ln()
@@ -791,26 +872,28 @@ def generate_text_report(
     ln("---")
     ln("## Validation: Work Logged on Sub-tasks (Sprint Window)")
     ln()
-    ln(
-        f"Worklog entries with start date in **[{sprint_start.isoformat()}, {report_cap.isoformat()}]** "
-        "on sub-task issues (should be empty when logging only on stories / tasks)."
-    )
-    ln()
-    if not work_report.errors_child_worklogs:
-        ln("*No worklogs on sub-tasks in this window.*")
+    if planning_mode:
+        ln(f"*{REASON_NOT_STARTED} — no worklog window.*")
     else:
-        ln("| Ticket | Assignee | Parent | Total (h) | By author | Summary |")
-        ln("|:-------|:---------|:-------|----------:|:----------|:--------|")
-        for e in work_report.errors_child_worklogs:
-            pk = e.parent_key or "—"
-            detail = "; ".join(f"{a}: {h:.2f}h" for a, h in e.hours_by_author.items())
-            ln(
-                f"| {e.key} | {e.assignee} | {pk} | {e.total_hours:.2f} | {detail} | "
-                f"{e.summary[:30]} |"
-            )
+        ln(
+            f"Worklog entries with start date in **[{sprint_start.isoformat()}, {report_cap.isoformat()}]** "
+            "on sub-task issues (should be empty when logging only on stories / tasks)."
+        )
+        ln()
+        if not work_report.errors_child_worklogs:
+            ln("*No worklogs on sub-tasks in this window.*")
+        else:
+            ln("| Ticket | Assignee | Parent | Total (h) | By author | Summary |")
+            ln("|:-------|:---------|:-------|----------:|:----------|:--------|")
+            for e in work_report.errors_child_worklogs:
+                pk = e.parent_key or "—"
+                detail = "; ".join(f"{a}: {h:.2f}h" for a, h in e.hours_by_author.items())
+                ln(
+                    f"| {e.key} | {e.assignee} | {pk} | {e.total_hours:.2f} | {detail} | "
+                    f"{e.summary[:30]} |"
+                )
     ln()
 
-    # ── Sprint Completion & Velocity ─────────────────────────────────
     if issues is not None:
         assert team_completion is not None
         tc = team_completion
@@ -833,15 +916,19 @@ def generate_text_report(
         ln()
 
         def _pct(p: float | None) -> str:
+            if planning_mode:
+                return REASON_NOT_STARTED
             return "—" if p is None else f"{int(round(p))}%"
 
         def _vel(v: float | None) -> str:
+            if planning_mode:
+                return REASON_NOT_STARTED
             return "—" if v is None else f"{v:.2f}"
 
         ln("### Team")
         ln()
         ln("| Metric | Value | Target |")
-        ln("|--------|------:|:-------|")
+        ln("|--------|:------|:-------|")
         ln(f"| Tickets committed | {tc.tickets_committed} | — |")
         ln(f"| Tickets done | {tc.tickets_done} | — |")
         ln(f"| **Completion rate (tickets)** | **{_pct(tc.ticket_pct)}** | ≥ 90% |")
@@ -860,8 +947,8 @@ def generate_text_report(
                 "SP delivered / committed | SP % | SP / person-day |"
             )
             ln(
-                "|--------|:-------------------------|--------:|"
-                ":-------------------------|------:|----------------:|"
+                "|--------|:-------------------------|:--------|"
+                ":-------------------------|:------|:----------------|"
             )
             for r in tc.rows:
                 ln(
@@ -872,7 +959,6 @@ def generate_text_report(
                 )
             ln()
 
-        # ── Sprint Tickets — Status & Remaining Work ─────────────────────
         ticket_rows = build_ticket_rows(config, issues)
         ln("---")
         ln("## Sprint Tickets — Status & Remaining Work")
@@ -892,36 +978,29 @@ def generate_text_report(
             ln()
         else:
             ln(
-                "| Key | Summary | Type | Assignee | Status | "
-                "Estimate (h) | Remaining (h) | SP |"
+                "| Key | Summary | Type | Assignee | Status | Estimate (h) | Remaining (h) | SP |"
             )
             ln(
-                "|-----|---------|:----:|---------|--------|"
-                "------:|------:|---:|"
+                "|-----|---------|------|----------|--------|-------------:|--------------:|---:|"
             )
-            for r in ticket_rows:
-                summary = r.summary.replace("|", "\\|")
+            for t in ticket_rows:
+                summary = t.summary.replace("|", "\\|")
                 if len(summary) > 60:
                     summary = summary[:57].rstrip() + "…"
-                if r.remaining_hours is None:
-                    rem_text = "—"
-                else:
-                    rem_text = f"{r.remaining_hours:.1f}"
-                    if r.is_effectively_done and r.remaining_hours > 1e-6:
-                        rem_text += " ⚠"
-                sp_text = "—" if r.story_points <= 1e-9 else _fmt_sp(r.story_points)
+                rem = "—" if t.remaining_hours is None else f"{t.remaining_hours:.1f}"
+                if t.is_effectively_done and t.remaining_hours and t.remaining_hours > 1e-6:
+                    rem = f"⚠ {rem}"
                 ln(
-                    f"| {r.key} | {summary} | {r.type_} | {r.assignee} | {r.status} | "
-                    f"{r.estimate_hours:.1f} | {rem_text} | {sp_text} |"
+                    f"| {t.key} | {summary} | {t.type_} | {t.assignee} | {t.status} | "
+                    f"{t.estimate_hours:.1f} | {rem} | {_fmt_sp(t.story_points)} |"
                 )
             ln()
 
-    # ── Placeholder for remaining metrics ─────────────────────────────────
     ln("---")
     ln()
     ln(
         "*Additional metrics (Jira hygiene score, ceremony effectiveness, remaining-work "
-        "burndown line, …) are not calculated in this reporting mode yet.*"
+        'burndown line, …) are not calculated in this reporting mode yet.*'
     )
     ln()
 
