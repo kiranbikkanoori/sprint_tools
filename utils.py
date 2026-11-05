@@ -181,28 +181,39 @@ def issue_has_subtasks(raw: dict, *, rest_fields: dict | None = None) -> bool:
     return False
 
 
+def _is_subtask_type_name(name: str | None) -> bool:
+    n = (name or "").strip().lower().replace("_", "-")
+    return n in {"sub-task", "subtask"} or n.endswith(" sub-task")
+
+
 def classify_issue_bucket(
     *,
     issuetype_name: str | None,
-    has_parent: bool,
+    has_parent: bool = False,
     issuetype_is_subtask: bool = False,
     has_subtasks: bool = False,
 ) -> str:
     """
     Classify for sprint worklog reporting: **Story**, **Task**, or **Sub-task**.
 
-    - **Sub-task:** parent link, or type name Sub-task, or ``issuetype.subtask`` from Jira.
-    - **Story:** name in ``ISSUE_TYPE_STORY_NAMES``, or (fallback) has native sub-tasks and no parent.
+    - **Sub-task:** Jira ``issuetype.subtask`` flag, or type name Sub-task / Subtask.
+      A ``parent`` link alone is **not** enough (Cloud Stories often parent an Epic).
+    - **Story:** name in ``ISSUE_TYPE_STORY_NAMES``, or (fallback) has native sub-tasks
+      and is not itself a sub-task type.
     - **Task:** other non–sub-task issues.
+
+    ``has_parent`` is accepted for call-site compatibility but is not used to decide
+    Sub-task (Silabs Server used Epic Link instead of ``parent``; Cloud uses both).
     """
+    del has_parent  # retained in signature; must not drive Sub-task on Cloud
     n = (issuetype_name or "").strip().lower()
-    if has_parent or n == "sub-task" or issuetype_is_subtask:
+    if issuetype_is_subtask or _is_subtask_type_name(n):
         return "Sub-task"
     if n in ISSUE_TYPE_STORY_NAMES:
         return "Story"
     if n and _ISSUE_TYPE_STORY_WORD.search(n):
         return "Story"
-    if has_subtasks and not has_parent:
+    if has_subtasks and not issuetype_is_subtask:
         return "Story"
     return "Task"
 
@@ -211,10 +222,10 @@ def effective_issue_type(issue: dict) -> str:
     """
     **Story** / **Task** / **Sub-task** from portable sprint JSON.
 
-    Uses ``issuetype_name``, ``parent_key``, ``issuetype_subtask``, ``has_subtasks``.
-    ``issuetype_name`` of ``Unknown`` is treated as missing. If the name is missing,
-    falls back to normalized stored ``type`` when it is already **Story** or **Sub-task**,
-    then to structural rules (e.g. ``has_subtasks``).
+    Uses ``issuetype_name``, ``issuetype_subtask``, ``has_subtasks`` (and ``parent_key``
+    only for context — not as a Sub-task signal). ``issuetype_name`` of ``Unknown``
+    is treated as missing. If the name is missing, falls back to normalized stored
+    ``type`` when it is already **Story** or **Sub-task**, then to structural rules.
     """
     iname = (issue.get("issuetype_name") or "").strip()
     if iname.lower() == "unknown":
@@ -235,7 +246,13 @@ def effective_issue_type(issue: dict) -> str:
     if legacy == "Story":
         return "Story"
     if legacy == "Sub-task":
-        return "Sub-task"
+        # Legacy JSON may have marked Epic-linked Stories as Sub-task via parent.
+        # Trust that only when the subtask flag is set or the stored name says so.
+        if is_sub or _is_subtask_type_name(issue.get("issuetype_name")):
+            return "Sub-task"
+        # Fall through to structural / SP rules for Cloud-era mislabels.
+        if has_subs:
+            return "Story"
 
     base = classify_issue_bucket(
         issuetype_name=None,
@@ -244,7 +261,7 @@ def effective_issue_type(issue: dict) -> str:
         has_subtasks=has_subs,
     )
     # MCP sometimes omits issuetype entirely: many Silabs backlog items use story points only on stories.
-    if base == "Task" and not has_parent and not is_sub:
+    if base == "Task" and not is_sub:
         if jira_project_key(issue) in _STORY_POINT_INFER_STORY_EXCLUDE_PROJECTS:
             return base
         sp = issue.get("story_points")
@@ -486,29 +503,57 @@ def seconds_to_hours(s: float) -> float:
     return s / 3600.0
 
 
-# Common Jira custom-field names that hold "story points" depending on the
-# instance / API shape. Probed in this order; the first non-null value wins.
-# At Silabs, ``customfield_10344`` is the populated one. Do not include
-# unrelated numeric fields like ``customfield_10004`` ("Number of Attachments"),
-# which can falsely inflate committed SP in the report.
-STORY_POINT_FIELDS = (
+# Story-point custom fields differ by Jira backend. Never include Cloud
+# ``customfield_10004`` here — on siliconlabs.atlassian.net that is Epic Link.
+STORY_POINT_FIELDS_SERVER = (
     "story_points",
-    "customfield_10344",
+    "customfield_10344",  # Silabs Server/DC
     "customfield_10028",
     "customfield_10016",
     "customfield_10026",
 )
 
+STORY_POINT_FIELDS_CLOUD = (
+    "story_points",
+    "customfield_10008",  # Story Points on Atlassian Cloud
+    "customfield_11116",  # Story point estimate
+)
 
-def extract_story_points(raw: dict) -> float | None:
-    """Return the first non-null story-point value across known field names.
+# Backward-compatible default (Silabs); prefer ``story_point_fields_for_backend``.
+STORY_POINT_FIELDS = STORY_POINT_FIELDS_SERVER
+
+_SPRINT_ISSUE_CORE_FIELDS = (
+    "summary,status,issuetype,assignee,timetracking,parent,subtasks,resolutiondate"
+)
+
+
+def story_point_fields_for_backend(backend: str | None) -> tuple[str, ...]:
+    """Return ordered story-point field names for ``server`` or ``cloud``."""
+    b = (backend or "server").strip().lower()
+    if b in {"cloud", "atlassian", "jira-cloud"}:
+        return STORY_POINT_FIELDS_CLOUD
+    return STORY_POINT_FIELDS_SERVER
+
+
+def sprint_issue_fields(backend: str | None = None) -> str:
+    """REST ``fields`` query for sprint issues, including backend-specific SP IDs."""
+    sp_custom = [
+        f for f in story_point_fields_for_backend(backend) if f.startswith("customfield_")
+    ]
+    if not sp_custom:
+        return _SPRINT_ISSUE_CORE_FIELDS
+    return _SPRINT_ISSUE_CORE_FIELDS + "," + ",".join(sp_custom)
+
+
+def extract_story_points(raw: dict, backend: str | None = None) -> float | None:
+    """Return the first non-null story-point value for the given backend.
 
     Handles plain numbers and ``{"value": X}`` dicts (some MCP servers wrap
     custom fields). Returns ``None`` if no field is set or all are non-numeric.
     """
     if not isinstance(raw, dict):
         return None
-    for field_name in STORY_POINT_FIELDS:
+    for field_name in story_point_fields_for_backend(backend):
         val = raw.get(field_name)
         if val is None:
             continue

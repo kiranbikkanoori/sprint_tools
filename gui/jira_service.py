@@ -11,9 +11,6 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-import requests
-from requests.auth import HTTPBasicAuth
-
 # Make sibling modules importable when running from source or PyInstaller.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -25,6 +22,13 @@ from fetch_sprint_data import (
     find_board,
     find_sprint,
 )
+from jira_auth import (
+    JiraAuthError,
+    build_auth,
+    describe_auth,
+    normalize_backend,
+    probe_connection,
+)
 from utils import parse_iso_date
 
 
@@ -32,31 +36,28 @@ class JiraConfigError(RuntimeError):
     """Missing or invalid Jira credentials."""
 
 
-class _BearerAuth(requests.auth.AuthBase):
-    def __init__(self, token: str) -> None:
-        self.token = token
-
-    def __call__(self, r):
-        r.headers["Authorization"] = f"Bearer {self.token}"
-        return r
-
-
 def make_client(creds: dict[str, str]) -> JiraClient:
     """Build a JiraClient from a credentials dict (see AppSettings.effective_credentials)."""
-    base_url = creds.get("JIRA_BASE_URL", "").strip()
-    if not base_url:
-        raise JiraConfigError("Jira base URL is not configured.")
-    token = creds.get("JIRA_TOKEN", "").strip()
-    if token:
-        return JiraClient(base_url, _BearerAuth(token))
-    user = creds.get("JIRA_USER", "").strip()
-    password = creds.get("JIRA_PASSWORD", "").strip()
-    if user and password:
-        return JiraClient(base_url, HTTPBasicAuth(user, password))
-    raise JiraConfigError(
-        "No Jira credentials configured. Set a personal access token "
-        "or a username + password in Settings."
-    )
+    try:
+        base_url, auth = build_auth(creds)
+        backend = normalize_backend(creds.get("JIRA_BACKEND"))
+    except JiraAuthError as e:
+        raise JiraConfigError(str(e)) from e
+    return JiraClient(base_url, auth, backend=backend)
+
+
+def test_connection(creds: dict[str, str]) -> tuple[str, int, str]:
+    """
+    Validate credentials against the selected backend.
+
+    Returns ``(base_url, board_count, auth_description)``.
+    """
+    try:
+        base_url, auth = build_auth(creds)
+    except JiraAuthError as e:
+        raise JiraConfigError(str(e)) from e
+    result = probe_connection(base_url, auth)
+    return base_url, len(result["boards"]), describe_auth(creds)
 
 
 def list_boards(client: JiraClient, query: str = "") -> list[dict]:
@@ -103,7 +104,7 @@ def fetch_sprint_payload(
     if progress_cb:
         progress_cb("Fetching issues…", 0, 1)
     raw_issues = client.get_sprint_issues(sprint_id)
-    issues = [convert_issue(i) for i in raw_issues]
+    issues = [convert_issue(i, backend=client.backend) for i in raw_issues]
 
     total = len(issues)
     worklogs: dict[str, list[dict]] = {}

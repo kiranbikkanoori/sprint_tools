@@ -23,38 +23,28 @@ pip install -r requirements.txt
 
 ### Jira authentication
 
-Two modes, auto-detected at runtime:
+The app and CLI talk to Jira over **REST** (not Cursor MCP). Pick a backend with `JIRA_BACKEND`:
 
-**Mode 1: MCP Gateway** (default when Cursor is available)
+| Backend | `JIRA_BACKEND` | Credentials |
+|---------|----------------|-------------|
+| Silabs Server / DC | `server` | `JIRA_BASE_URL` + `JIRA_TOKEN` (Bearer PAT) |
+| Atlassian Cloud | `cloud` | `JIRA_BASE_URL` + `JIRA_USER` (email) + `JIRA_TOKEN` (API token) |
 
-- Uses credentials from `~/.cursor/mcp.json`
-- Zero extra setup if Jira MCP already works in Cursor
-
-**Mode 2: Direct Jira REST API**
-
-- Falls back if MCP is unavailable; force with `--no-mcp`
-- Uses a Jira Personal Access Token (PAT)
-
-**PAT resolution priority** (first match wins):
-
-1. `--jira-token` CLI argument  
-2. `JIRA_TOKEN` environment variable  
-3. `.env` in the `sprint_tools` directory  
-4. PAT from `~/.cursor/mcp.json`  
-5. Interactive prompt  
+Optional legacy path: `fetch_via_mcp.py` may still try a Silabs MCP gateway first; use `--no-mcp` for Cloud.
 
 ```bash
-# Option A: .env (recommended for terminal use)
+# Silabs Server
 cp .env.defaults .env
-# Edit .env:
-#   JIRA_TOKEN=your-personal-access-token
-#   JIRA_BASE_URL=https://jira.silabs.com   # optional override
+# JIRA_BACKEND=server
+# JIRA_BASE_URL=https://jira.silabs.com
+# JIRA_TOKEN=your-pat
 
-# Option B: environment variable
-export JIRA_TOKEN=your-personal-access-token
+# Atlassian Cloud
+# JIRA_BACKEND=cloud
+# JIRA_BASE_URL=https://siliconlabs.atlassian.net
+# JIRA_USER=you@silabs.com
+# JIRA_TOKEN=your-atlassian-api-token
 ```
-
-Default Jira URL is `https://jira.silabs.com`. Override with `--jira-url` or `JIRA_BASE_URL` in `.env`.
 
 ---
 
@@ -227,7 +217,7 @@ sprint_tools/
 | Issue | Fix |
 |-------|-----|
 | `MCP gateway failed` | Script falls back to direct REST; or use `--no-mcp` |
-| `No Jira PAT found` | Set `JIRA_TOKEN` in `.env`, env var, or `--jira-token` |
+| Auth / credentials errors | Set `JIRA_BACKEND` + URL + token; Cloud also needs `JIRA_USER` (email) |
 | `Error: sprint not found` | Sprint name in config must match Jira exactly |
 | `ModuleNotFoundError: matplotlib` | `pip install -r requirements.txt` |
 | Empty burndown | Team members need worklogs in the sprint date range |

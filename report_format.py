@@ -38,7 +38,7 @@ python sprint_report.py --generate-format -o ./output
 
 Two separate markdown tables with the same date columns:
 
-1. **Stories — logged hours & remaining** — Jira issue types **Story**, **User Story**, and **Epic** (case-insensitive), with no parent link (and not classified as Sub-task).
+1. **Stories — logged hours & remaining** — Jira issue types **Story**, **User Story**, and **Epic** (case-insensitive), not classified as Sub-task (Epic `parent` links on Cloud do not make a Story a Sub-task).
 2. **Tasks (non-story) — logged hours & remaining** — all other **non–sub-task** issue types (e.g. **Task**, **Bug**, **Spike**).
 
 - **Included people:** Team members with **Include in Report = Yes** (name must match Jira worklog author for logged hours).

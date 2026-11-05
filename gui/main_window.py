@@ -102,10 +102,13 @@ class MainWindow(QMainWindow):
         self.config_page.config_ready.connect(self._on_config_ready)
 
         # Default page: Settings if no creds, otherwise Sprint (not Help)
+        from jira_auth import JiraAuthError, build_auth
+
         creds = self.settings.effective_credentials()
-        if creds.get("JIRA_BASE_URL") and (creds.get("JIRA_TOKEN") or creds.get("JIRA_USER")):
+        try:
+            build_auth(creds)
             self._goto(IDX_SPRINT)
-        else:
+        except JiraAuthError:
             self._goto(IDX_SETTINGS)
 
     # ── nav ─────────────────────────────────────────────────────────────

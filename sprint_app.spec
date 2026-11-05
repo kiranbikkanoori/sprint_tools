@@ -27,6 +27,7 @@ hidden_imports = [
     "report_format",
     "burndown_chart",
     "fetch_sprint_data",
+    "jira_auth",
     "utils",
     # PySide6 sub-modules sometimes missed by the analyser:
     "PySide6.QtCore",

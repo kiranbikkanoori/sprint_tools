@@ -3,25 +3,21 @@
 Fetch sprint data from Jira and export to portable JSON.
 
 Supports two modes (auto-detected):
-  1. MCP gateway  — uses ~/.cursor/mcp.json (works inside Cursor)
-  2. Direct REST   — uses Jira PAT from env var, .env file, mcp.json, or prompt
+  1. MCP gateway  — optional legacy Silabs gateway via ~/.cursor/mcp.json
+  2. Direct REST  — Silabs Server/DC or Atlassian Cloud via .env / Settings keys
+
+Prefer ``--no-mcp`` (or unset jira-mcp) for Cloud. REST auth is selected by
+``JIRA_BACKEND=server|cloud`` (see ``jira_auth.py``).
 
 Usage
 -----
-    # Auto-detect mode (tries MCP first, falls back to direct REST)
-    python fetch_via_mcp.py --config sprint_report_config.md
-
-    # With known board ID (faster)
-    python fetch_via_mcp.py --config sprint_report_config.md --board-id 1325
-
-    # Force direct REST API (skip MCP)
+    # Force direct REST (recommended)
     python fetch_via_mcp.py --config sprint_report_config.md --no-mcp
 
-    # Provide PAT via env var
-    JIRA_TOKEN=your-pat python fetch_via_mcp.py --config sprint_report_config.md
-
-    # Override Jira URL
-    python fetch_via_mcp.py --config sprint_report_config.md --jira-url https://jira.example.com
+    # Cloud example
+    JIRA_BACKEND=cloud JIRA_BASE_URL=https://siliconlabs.atlassian.net \\
+      JIRA_USER=you@silabs.com JIRA_TOKEN=api-token \\
+      python fetch_via_mcp.py --config sprint_report_config.md --no-mcp
 """
 
 from __future__ import annotations
@@ -40,6 +36,15 @@ from requests.auth import AuthBase
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
+from jira_auth import (
+    BACKEND_CLOUD,
+    BACKEND_SERVER,
+    DEFAULT_URLS,
+    JiraAuthError,
+    build_auth,
+    credentials_from_environ,
+    normalize_backend,
+)
 from mcp_client import McpClient, find_mcp_config, load_mcp_server_config
 from utils import (
     classify_issue_bucket,
@@ -49,40 +54,27 @@ from utils import (
     issue_has_subtasks,
     jira_issue_is_rest_api_shape,
     parse_jira_time_to_hours,
+    sprint_issue_fields,
 )
 
 
-DEFAULT_JIRA_URL = "https://jira.silabs.com"
-SPRINT_FIELDS_REST = (
-    "summary,status,issuetype,assignee,timetracking,parent,subtasks,"
-    "resolutiondate,customfield_10344,customfield_10028,customfield_10016,"
-    "customfield_10026,customfield_10004"
-)
+DEFAULT_JIRA_URL = DEFAULT_URLS[BACKEND_SERVER]
+SPRINT_FIELDS_REST = sprint_issue_fields(BACKEND_SERVER)
 SPRINT_FIELDS_MCP = (
-    "summary,status,issuetype,assignee,timetracking,parent,subtasks,"
-    "resolutiondate,story_points,customfield_10344,customfield_10028,"
-    "customfield_10016,customfield_10026,customfield_10004"
+    sprint_issue_fields(BACKEND_SERVER).replace("resolutiondate,", "resolutiondate,story_points,")
 )
 
 
 # ── Direct Jira REST Client ─────────────────────────────────────────────────
 
-class BearerAuth(AuthBase):
-    def __init__(self, token: str):
-        self.token = token
-
-    def __call__(self, r):
-        r.headers["Authorization"] = f"Bearer {self.token}"
-        return r
-
-
 class JiraRestClient:
-    """Direct Jira REST API client using a PAT."""
+    """Direct Jira REST API client (Server Bearer PAT or Cloud Basic)."""
 
-    def __init__(self, base_url: str, pat: str):
+    def __init__(self, base_url: str, auth: AuthBase, backend: str = BACKEND_SERVER):
         self.base_url = base_url.rstrip("/")
+        self.backend = normalize_backend(backend)
         self.session = requests.Session()
-        self.session.auth = BearerAuth(pat)
+        self.session.auth = auth
         self.session.headers["Content-Type"] = "application/json"
 
     def _get(self, path: str, params: dict | None = None) -> dict:
@@ -117,11 +109,12 @@ class JiraRestClient:
             start_at += len(batch)
         return all_sprints
 
-    def get_sprint_issues(self, sprint_id: int, fields: str = SPRINT_FIELDS_REST) -> list[dict]:
+    def get_sprint_issues(self, sprint_id: int, fields: str | None = None) -> list[dict]:
+        field_list = fields if fields is not None else sprint_issue_fields(self.backend)
         all_issues = []
         start_at = 0
         while True:
-            params = {"fields": fields, "startAt": start_at, "maxResults": 50}
+            params = {"fields": field_list, "startAt": start_at, "maxResults": 50}
             data = self._get(f"/rest/agile/1.0/sprint/{sprint_id}/issue", params)
             issues = data.get("issues", [])
             all_issues.extend(issues)
@@ -144,7 +137,7 @@ class JiraRestClient:
 
 # ── Shared data conversion ──────────────────────────────────────────────────
 
-def convert_issue_mcp(raw: dict) -> dict:
+def convert_issue_mcp(raw: dict, backend: str | None = None) -> dict:
     """Convert an issue from MCP gateway response (fields at top level)."""
     tt = raw.get("timetracking", {}) or {}
     est_raw = tt.get("original_estimate") or tt.get("originalEstimate", "0") or "0"
@@ -178,13 +171,13 @@ def convert_issue_mcp(raw: dict) -> dict:
         "estimate_raw": est_raw,
         "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
         "remaining_estimate_raw": rem_raw,
-        "story_points": extract_story_points(raw),
+        "story_points": extract_story_points(raw, backend=backend),
         "resolution_date": resolution_date,
         "parent_key": (raw.get("parent") or {}).get("key"),
     }
 
 
-def convert_issue_rest(raw: dict) -> dict:
+def convert_issue_rest(raw: dict, backend: str | None = None) -> dict:
     """Convert an issue from direct Jira REST API response (fields nested)."""
     fields = raw.get("fields", {})
     tt = fields.get("timetracking", {}) or {}
@@ -220,17 +213,17 @@ def convert_issue_rest(raw: dict) -> dict:
         "estimate_raw": est_raw,
         "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
         "remaining_estimate_raw": rem_raw,
-        "story_points": extract_story_points(fields),
+        "story_points": extract_story_points(fields, backend=backend),
         "resolution_date": resolution_date,
         "parent_key": parent.get("key") if parent else None,
     }
 
 
-def convert_issue_auto(raw: dict) -> dict:
+def convert_issue_auto(raw: dict, backend: str | None = None) -> dict:
     """Use REST or flattened MCP mapping depending on how Jira/MCP returned the issue."""
     if jira_issue_is_rest_api_shape(raw):
-        return convert_issue_rest(raw)
-    return convert_issue_mcp(raw)
+        return convert_issue_rest(raw, backend=backend)
+    return convert_issue_mcp(raw, backend=backend)
 
 
 def convert_worklog_mcp(wl: dict) -> dict:
@@ -290,75 +283,79 @@ def load_env_file(path: Path):
             os.environ.setdefault(key.strip(), value)
 
 
-def resolve_jira_url(cli_arg: str | None) -> str:
-    """Resolve Jira base URL with priority: CLI arg > env var > .env > .env.defaults > hardcoded."""
-    if cli_arg:
-        return cli_arg.rstrip("/")
-
+def _load_credential_env_files() -> None:
     script_dir = Path(__file__).resolve().parent
-
     load_env_file(script_dir / ".env")
     load_env_file(script_dir.parent / ".env")
     load_env_file(script_dir / ".env.defaults")
 
-    return os.environ.get("JIRA_BASE_URL", DEFAULT_JIRA_URL).rstrip("/")
 
+def resolve_rest_creds(
+    jira_url: str | None = None,
+    jira_token: str | None = None,
+    jira_user: str | None = None,
+    jira_backend: str | None = None,
+    *,
+    interactive: bool = True,
+) -> dict[str, str]:
+    """Merge CLI overrides with env / .env into a credentials dict for ``build_auth``."""
+    _load_credential_env_files()
+    creds = credentials_from_environ()
+    if jira_backend:
+        creds["JIRA_BACKEND"] = jira_backend
+    if jira_url:
+        creds["JIRA_BASE_URL"] = jira_url
+    if jira_token:
+        creds["JIRA_TOKEN"] = jira_token
+    if jira_user:
+        creds["JIRA_USER"] = jira_user
 
-def resolve_jira_pat(cli_arg: str | None) -> str:
-    """Resolve Jira PAT with priority: CLI arg > env var > .env > mcp.json > interactive prompt."""
-    if cli_arg:
-        return cli_arg
+    if not (creds.get("JIRA_TOKEN") or "").strip():
+        mcp_path = find_mcp_config()
+        if mcp_path:
+            pat = extract_pat_from_mcp_config(mcp_path)
+            if pat:
+                print(f"  Using Jira PAT extracted from {mcp_path}")
+                creds["JIRA_TOKEN"] = pat
+                if not (creds.get("JIRA_BACKEND") or "").strip():
+                    creds["JIRA_BACKEND"] = BACKEND_SERVER
 
-    script_dir = Path(__file__).resolve().parent
-    load_env_file(script_dir / ".env")
-    load_env_file(script_dir.parent / ".env")
+    try:
+        normalize_backend(creds.get("JIRA_BACKEND"))
+        build_auth(creds)
+        return creds
+    except JiraAuthError:
+        pass
 
-    token = os.environ.get("JIRA_TOKEN")
-    if token:
-        return token
+    if not interactive:
+        raise JiraAuthError("Jira credentials not configured.")
 
-    mcp_path = find_mcp_config()
-    if mcp_path:
-        pat = extract_pat_from_mcp_config(mcp_path)
-        if pat:
-            print(f"  Using Jira PAT extracted from {mcp_path}")
-            return pat
-
+    backend = normalize_backend(creds.get("JIRA_BACKEND") or BACKEND_SERVER)
     print()
-    print("  No Jira PAT found in environment or mcp.json.")
-    print("  Create one at: Jira → Profile → Personal Access Tokens")
-    print("  Or set JIRA_TOKEN env var / add to .env file.")
-    print()
-    pat = getpass.getpass("  Enter Jira PAT: ").strip()
-    if not pat:
-        print("Error: no PAT provided.", file=sys.stderr)
+    print(f"  Incomplete credentials for backend '{backend}'.")
+    if not (creds.get("JIRA_BASE_URL") or "").strip():
+        default = DEFAULT_URLS[backend]
+        entered = input(f"  Jira base URL [{default}]: ").strip()
+        creds["JIRA_BASE_URL"] = entered or default
+    if backend == BACKEND_CLOUD and not (creds.get("JIRA_USER") or "").strip():
+        creds["JIRA_USER"] = input("  Atlassian account email: ").strip()
+    if not (creds.get("JIRA_TOKEN") or "").strip():
+        label = "API token" if backend == BACKEND_CLOUD else "Jira PAT"
+        creds["JIRA_TOKEN"] = getpass.getpass(f"  Enter {label}: ").strip()
+    try:
+        build_auth(creds)
+    except JiraAuthError as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-    return pat
+    return creds
 
 
-def resolve_jira_pat_optional(cli_arg: str | None) -> str | None:
-    """
-    Try to resolve a Jira PAT silently (no interactive prompt).
-    Returns the PAT string or None if unavailable.
-    """
+def resolve_jira_url(cli_arg: str | None) -> str:
+    """Resolve Jira base URL with priority: CLI arg > env var > .env > .env.defaults > hardcoded."""
     if cli_arg:
-        return cli_arg
-
-    script_dir = Path(__file__).resolve().parent
-    load_env_file(script_dir / ".env")
-    load_env_file(script_dir.parent / ".env")
-
-    token = os.environ.get("JIRA_TOKEN")
-    if token:
-        return token
-
-    mcp_path = find_mcp_config()
-    if mcp_path:
-        pat = extract_pat_from_mcp_config(mcp_path)
-        if pat:
-            return pat
-
-    return None
+        return cli_arg.rstrip("/")
+    _load_credential_env_files()
+    return os.environ.get("JIRA_BASE_URL", DEFAULT_JIRA_URL).rstrip("/")
 
 
 # ── Sprint search (MCP) ────────────────────────────────────────────────────
@@ -521,11 +518,13 @@ def _make_history_client(
     jira_url: str | None,
     jira_token: str | None,
 ) -> JiraRestClient | None:
-    base_url = resolve_jira_url(jira_url)
-    pat = resolve_jira_pat_optional(jira_token)
-    if not pat:
+    try:
+        creds = resolve_rest_creds(jira_url, jira_token, interactive=False)
+        base_url, auth = build_auth(creds)
+        backend = normalize_backend(creds.get("JIRA_BACKEND"))
+    except JiraAuthError:
         return None
-    return JiraRestClient(base_url, pat)
+    return JiraRestClient(base_url, auth, backend=backend)
 
 
 def _enrich_issues_with_backlog_churn(
@@ -611,7 +610,7 @@ def fetch_via_mcp(
         start_at += len(issues_batch)
     print(" done.")
 
-    issues = [convert_issue_auto(i) for i in all_raw_issues]
+    issues = [convert_issue_auto(i, backend=BACKEND_SERVER) for i in all_raw_issues]
 
     tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
@@ -648,10 +647,18 @@ def fetch_via_mcp(
 
 # ── Fetch via direct REST ───────────────────────────────────────────────────
 
-def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | None, output_path: Path):
+def fetch_via_rest(
+    base_url: str,
+    auth: AuthBase,
+    sprint_name: str,
+    board_id: int | None,
+    output_path: Path,
+    backend: str = BACKEND_SERVER,
+):
     """Fetch sprint data using direct Jira REST API."""
-    print(f"Connecting to Jira REST API at {base_url}...")
-    client = JiraRestClient(base_url, pat)
+    backend = normalize_backend(backend)
+    print(f"Connecting to Jira REST API at {base_url} (backend={backend})...")
+    client = JiraRestClient(base_url, auth, backend=backend)
 
     sprint = None
     if board_id:
@@ -676,10 +683,10 @@ def fetch_via_rest(base_url: str, pat: str, sprint_name: str, board_id: int | No
     print(f"Found: {sprint_name} (ID: {sprint_id}, {start_date} → {end_date})")
 
     print("Fetching issues...", end="", flush=True)
-    all_raw_issues = client.get_sprint_issues(sprint_id, fields=SPRINT_FIELDS_REST)
+    all_raw_issues = client.get_sprint_issues(sprint_id)
     print(f" {len(all_raw_issues)} done.")
 
-    issues = [convert_issue_rest(i) for i in all_raw_issues]
+    issues = [convert_issue_rest(i, backend=backend) for i in all_raw_issues]
 
     tickets_to_fetch = [i["key"] for i in issues]
     print(f"Fetching worklogs for {len(tickets_to_fetch)} tickets...", end="", flush=True)
@@ -764,7 +771,14 @@ def main():
     parser.add_argument("--mcp-config", default=None, help="Path to mcp.json (auto-detected if omitted)")
     parser.add_argument("--no-mcp", action="store_true", help="Skip MCP gateway, use direct Jira REST API")
     parser.add_argument("--jira-url", default=None, help=f"Jira base URL (default: {DEFAULT_JIRA_URL})")
-    parser.add_argument("--jira-token", default=None, help="Jira PAT (prefer JIRA_TOKEN env var instead)")
+    parser.add_argument("--jira-token", default=None, help="Jira token (prefer JIRA_TOKEN env var)")
+    parser.add_argument("--jira-user", default=None, help="Email/username (required for Cloud)")
+    parser.add_argument(
+        "--jira-backend",
+        default=None,
+        choices=[BACKEND_SERVER, BACKEND_CLOUD],
+        help="server (Silabs Bearer PAT) or cloud (Atlassian Basic email+token)",
+    )
     args = parser.parse_args()
 
     config = parse_config(args.config)
@@ -776,7 +790,7 @@ def main():
     safe_name = sprint_name.replace(" ", "_")
     output_path = Path(args.output) if args.output else Path(f"sprint_data_{safe_name}.json")
 
-    # ── Try MCP gateway first ────────────────────────────────────────────
+    # ── Try MCP gateway first (legacy Silabs gateway only) ───────────────
     if not args.no_mcp:
         mcp_path = Path(args.mcp_config) if args.mcp_config else find_mcp_config()
         if mcp_path and mcp_path.exists():
@@ -794,11 +808,20 @@ def main():
                     print(f"\nMCP gateway failed: {e}", file=sys.stderr)
                     print("Falling back to direct Jira REST API...\n")
 
-    # ── Fallback: direct REST API ────────────────────────────────────────
-    base_url = resolve_jira_url(args.jira_url)
-    print(f"Mode: Direct Jira REST API ({base_url})")
-    pat = resolve_jira_pat(args.jira_token)
-    fetch_via_rest(base_url, pat, sprint_name, args.board_id, output_path)
+    # ── Fallback: direct REST API (Server or Cloud) ──────────────────────
+    creds = resolve_rest_creds(
+        args.jira_url,
+        args.jira_token,
+        args.jira_user,
+        args.jira_backend,
+        interactive=True,
+    )
+    base_url, auth = build_auth(creds)
+    backend = normalize_backend(creds.get("JIRA_BACKEND"))
+    print(f"Mode: Direct Jira REST API ({base_url}, backend={backend})")
+    fetch_via_rest(
+        base_url, auth, sprint_name, args.board_id, output_path, backend=backend,
+    )
 
 
 if __name__ == "__main__":

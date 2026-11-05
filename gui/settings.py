@@ -10,9 +10,13 @@ so casual inspection of settings.json does not leak the PAT.  This is *not*
 a defence against an attacker who has filesystem access — it is just to
 keep tokens off plain disk.
 
-A ``.env`` file (``JIRA_BASE_URL`` / ``JIRA_TOKEN`` / ``JIRA_USER`` /
-``JIRA_PASSWORD``) next to the executable or in the project root is used
-as a fallback if the user has not configured credentials in the app yet.
+A ``.env`` file (``JIRA_BACKEND`` / ``JIRA_BASE_URL`` / ``JIRA_TOKEN`` /
+``JIRA_USER`` / ``JIRA_PASSWORD``) next to the executable or in the project
+root is used as a fallback if the user has not configured credentials in
+the app yet.
+
+``JIRA_BACKEND`` is ``server`` (Silabs Server/DC, Bearer PAT) or ``cloud``
+(Atlassian Cloud, Basic email + API token).
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ try:
 except ImportError:  # pragma: no cover - cryptography is in requirements
     _HAS_CRYPTO = False
 
+from jira_auth import BACKEND_SERVER, normalize_backend
 
 APP_DIR_NAME = "SprintReport"
 
@@ -163,6 +168,7 @@ def env_fallback() -> dict[str, str]:
 
 @dataclass
 class AppSettings:
+    jira_backend: str = BACKEND_SERVER
     jira_base_url: str = ""
     jira_token_enc: str = ""
     jira_user: str = ""
@@ -194,9 +200,18 @@ class AppSettings:
         Merge in-app settings with .env fallback values.
 
         In-app values win; only blanks fall back to env.
+        Backend falls back to env when the stored value is empty.
         """
         env = env_fallback()
+        backend_raw = (self.jira_backend or "").strip() or env.get(
+            "JIRA_BACKEND", BACKEND_SERVER
+        )
+        try:
+            backend = normalize_backend(backend_raw)
+        except ValueError:
+            backend = BACKEND_SERVER
         return {
+            "JIRA_BACKEND": backend,
             "JIRA_BASE_URL": self.jira_base_url or env.get("JIRA_BASE_URL", ""),
             "JIRA_TOKEN": self.jira_token or env.get("JIRA_TOKEN", ""),
             "JIRA_USER": self.jira_user or env.get("JIRA_USER", ""),
@@ -216,6 +231,10 @@ def load_settings() -> AppSettings:
     for k, v in raw.items():
         if hasattr(s, k):
             setattr(s, k, v)
+    try:
+        s.jira_backend = normalize_backend(s.jira_backend)
+    except ValueError:
+        s.jira_backend = BACKEND_SERVER
     if not s.output_dir:
         s.output_dir = str(output_dir_default())
     return s

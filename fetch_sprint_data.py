@@ -11,18 +11,21 @@ This script replaces the AI agent for data collection. It:
 
 Authentication
 --------------
-Set these environment variables (or put them in a .env file):
+Set ``JIRA_BACKEND`` to ``server`` (Silabs) or ``cloud`` (Atlassian), then:
 
+    # Silabs Server / Data Center (Bearer PAT)
+    export JIRA_BACKEND=server
     export JIRA_BASE_URL="https://jira.silabs.com"
     export JIRA_TOKEN="your-personal-access-token"
 
-    # --- OR use basic auth ---
-    export JIRA_BASE_URL="https://jira.silabs.com"
-    export JIRA_USER="your-username"
-    export JIRA_PASSWORD="your-password"
+    # Atlassian Cloud (Basic email + API token)
+    export JIRA_BACKEND=cloud
+    export JIRA_BASE_URL="https://siliconlabs.atlassian.net"
+    export JIRA_USER="you@silabs.com"
+    export JIRA_TOKEN="your-atlassian-api-token"
 
-To create a personal access token in Jira:
-  Profile → Personal Access Tokens → Create token
+Legacy Server username/password still works when ``JIRA_BACKEND=server``
+with ``JIRA_USER`` + ``JIRA_PASSWORD`` and no token.
 
 Usage
 -----
@@ -49,11 +52,17 @@ from pathlib import Path
 from urllib.parse import quote
 
 import requests
-from requests.auth import HTTPBasicAuth
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_parser import parse_config
+from jira_auth import (
+    BACKEND_SERVER,
+    JiraAuthError,
+    build_auth,
+    credentials_from_environ,
+    normalize_backend,
+)
 from utils import (
     classify_issue_bucket,
     derive_issue_added_to_sprint,
@@ -61,24 +70,20 @@ from utils import (
     extract_story_points,
     issue_has_subtasks,
     parse_jira_time_to_hours,
+    sprint_issue_fields,
 )
 
 
-# Default Jira REST ``fields`` parameter for sprint issues. Includes the common
-# story-point custom-field IDs so SP can be extracted regardless of which one
-# the Jira instance uses (Silabs uses ``customfield_10344``).
-SPRINT_ISSUE_FIELDS = (
-    "summary,status,issuetype,assignee,timetracking,parent,subtasks,"
-    "resolutiondate,customfield_10344,customfield_10028,customfield_10016,"
-    "customfield_10026,customfield_10004"
-)
+# Default fields for Silabs Server (backward-compatible import name).
+SPRINT_ISSUE_FIELDS = sprint_issue_fields(BACKEND_SERVER)
 
 
 # ── Jira REST client ────────────────────────────────────────────────────────
 
 class JiraClient:
-    def __init__(self, base_url: str, auth):
+    def __init__(self, base_url: str, auth, backend: str = BACKEND_SERVER):
         self.base_url = base_url.rstrip("/")
+        self.backend = normalize_backend(backend)
         self.session = requests.Session()
         self.session.auth = auth
         self.session.headers.update({"Content-Type": "application/json"})
@@ -123,14 +128,21 @@ class JiraClient:
         return all_sprints
 
     def get_sprint_issues(
-        self, sprint_id: int, fields: str = SPRINT_ISSUE_FIELDS,
+        self,
+        sprint_id: int,
+        fields: str | None = None,
         max_results: int = 200,
     ) -> list[dict]:
         """Fetch all issues in a sprint (handles pagination)."""
+        field_list = fields if fields is not None else sprint_issue_fields(self.backend)
         all_issues = []
         start_at = 0
         while True:
-            params = {"fields": fields, "startAt": start_at, "maxResults": min(50, max_results - start_at)}
+            params = {
+                "fields": field_list,
+                "startAt": start_at,
+                "maxResults": min(50, max_results - start_at),
+            }
             data = self._get(f"/rest/agile/1.0/sprint/{sprint_id}/issue", params)
             issues = data.get("issues", [])
             all_issues.extend(issues)
@@ -155,7 +167,7 @@ class JiraClient:
 
 # ── Data conversion ─────────────────────────────────────────────────────────
 
-def convert_issue(raw: dict) -> dict:
+def convert_issue(raw: dict, backend: str | None = None) -> dict:
     fields = raw.get("fields", {})
     tt = fields.get("timetracking", {}) or {}
     est_raw = tt.get("originalEstimate", "0") or "0"
@@ -190,7 +202,7 @@ def convert_issue(raw: dict) -> dict:
         "estimate_raw": est_raw,
         "remaining_estimate_hours": parse_jira_time_to_hours(rem_raw),
         "remaining_estimate_raw": rem_raw,
-        "story_points": extract_story_points(fields),
+        "story_points": extract_story_points(fields, backend=backend),
         "resolution_date": resolution_date,
         "parent_key": parent.get("key") if parent else None,
     }
@@ -253,32 +265,18 @@ def load_env_file(path: str):
             os.environ.setdefault(key.strip(), value)
 
 
-def build_auth():
-    """Build requests auth from environment variables."""
-    base_url = os.environ.get("JIRA_BASE_URL")
-    if not base_url:
-        print("Error: JIRA_BASE_URL not set.", file=sys.stderr)
-        print("Set it via environment variable or .env file.", file=sys.stderr)
+def build_auth_from_env():
+    """Build ``(base_url, auth)`` from environment / ``.env`` (exits on error)."""
+    try:
+        return build_auth(credentials_from_environ())
+    except JiraAuthError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print(
+            "Set JIRA_BACKEND, JIRA_BASE_URL, and credentials "
+            "(see script docstring).",
+            file=sys.stderr,
+        )
         sys.exit(1)
-
-    token = os.environ.get("JIRA_TOKEN")
-    if token:
-        class BearerAuth(requests.auth.AuthBase):
-            def __init__(self, t):
-                self.token = t
-            def __call__(self, r):
-                r.headers["Authorization"] = f"Bearer {self.token}"
-                return r
-        return base_url, BearerAuth(token)
-
-    user = os.environ.get("JIRA_USER")
-    password = os.environ.get("JIRA_PASSWORD")
-    if user and password:
-        return base_url, HTTPBasicAuth(user, password)
-
-    print("Error: No Jira credentials found.", file=sys.stderr)
-    print("Set JIRA_TOKEN or JIRA_USER + JIRA_PASSWORD.", file=sys.stderr)
-    sys.exit(1)
 
 
 def find_sprint(client: JiraClient, board_id: int, sprint_name: str) -> dict | None:
@@ -385,9 +383,11 @@ def main():
     safe_name = sprint_name.replace(" ", "_")
     output_path = Path(args.output) if args.output else Path(f"sprint_data_{safe_name}.json")
 
-    base_url, auth = build_auth()
-    client = JiraClient(base_url, auth)
-    print(f"Connected to: {base_url}")
+    creds = credentials_from_environ()
+    base_url, auth = build_auth_from_env()
+    backend = normalize_backend(creds.get("JIRA_BACKEND"))
+    client = JiraClient(base_url, auth, backend=backend)
+    print(f"Connected to: {base_url} (backend={backend})")
 
     # ── Find board ───────────────────────────────────────────────────────
     if args.board_id:
@@ -426,7 +426,7 @@ def main():
     raw_issues = client.get_sprint_issues(sprint_id)
     print(f" {len(raw_issues)} issues found.")
 
-    issues = [convert_issue(i) for i in raw_issues]
+    issues = [convert_issue(i, backend=client.backend) for i in raw_issues]
 
     # ── Fetch worklogs ───────────────────────────────────────────────────
     tickets_to_fetch = [i["key"] for i in issues]

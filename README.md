@@ -29,14 +29,14 @@ The Generate preview shows the HTML styling. Open the `.html` file in a browser 
 
 | Step | You do | App does |
 |------|--------|----------|
-| **1. Settings** | Enter Jira URL + Personal Access Token (or username/password) | Saves credentials encrypted locally |
+| **1. Settings** | Pick backend (Silabs Server or Atlassian Cloud), enter URL + token (Cloud also needs email) | Saves credentials encrypted locally |
 | **2. Sprint** | Search a board, pick a sprint, click *Load sprint* | Fetches issues + worklogs in the background |
 | **3. Configure** | Set report date, include/exclude people, leaves, exclusions | Auto-fills assignees; remembers config per sprint |
 | **4. Generate** | Click Generate | Builds HTML + markdown, previews the styled report, opens the output folder |
 
 ### Quick checklist
 
-1. **Settings** → Jira URL + PAT → Save  
+1. **Settings** → choose backend → URL + credentials → Save  
 2. **Sprint** → pick board + sprint → *Load sprint*  
 3. **Configure** → set **report date**, uncheck people who should not appear, add leaves/exclusions  
 4. **Generate** → preview → open output folder  
