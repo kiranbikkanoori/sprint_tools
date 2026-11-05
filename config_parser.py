@@ -17,9 +17,56 @@ class TeamMember:
 
 @dataclass
 class LeaveEntry:
+    """Planned leave for one person.
+
+    Prefer ``dates`` (``YYYY-MM-DD`` weekdays). ``days`` is kept for capacity and
+    for older configs that only stored a day count (no per-day shading).
+    """
+
     name: str
-    days: float
+    days: float = 0.0
     notes: str = ""
+    dates: list = field(default_factory=list)
+
+
+def effective_leave_days(entry: LeaveEntry) -> float:
+    """Leave days for capacity: count of ``dates`` when set, else legacy ``days``."""
+    dates = [str(d).strip() for d in (entry.dates or []) if str(d).strip()]
+    if dates:
+        return float(len(dates))
+    try:
+        return float(entry.days or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def leave_dates_by_person(planned_leaves: list) -> dict[str, set[str]]:
+    """Map person name → set of leave date strings (only entries that have dates)."""
+    out: dict[str, set[str]] = {}
+    for entry in planned_leaves or []:
+        name = (getattr(entry, "name", None) or "").strip()
+        if not name:
+            continue
+        dates = {str(d).strip() for d in (getattr(entry, "dates", None) or []) if str(d).strip()}
+        if not dates:
+            continue
+        out.setdefault(name, set()).update(dates)
+    return out
+
+
+def normalize_leave_entry(
+    *,
+    name: str,
+    days: float = 0.0,
+    notes: str = "",
+    dates: list | None = None,
+) -> LeaveEntry:
+    """Build a ``LeaveEntry``, syncing ``days`` from ``dates`` when dates are present."""
+    cleaned = sorted({str(d).strip()[:10] for d in (dates or []) if str(d).strip()})
+    entry = LeaveEntry(name=name.strip(), days=float(days or 0.0), notes=notes or "", dates=cleaned)
+    if cleaned:
+        entry.days = float(len(cleaned))
+    return entry
 
 
 @dataclass
@@ -147,8 +194,23 @@ def parse_config(config_path: str | Path) -> SprintConfig:
             notes = row[2].strip() if len(row) > 2 else ""
             if name and days_str:
                 try:
+                    # Support | Name | Days | Notes |  or  | Name | Days | Dates | Notes |
+                    leave_dates: list[str] = []
+                    leave_notes = notes
+                    if len(row) >= 4:
+                        leave_dates = [
+                            p.strip()[:10]
+                            for p in row[2].replace(";", ",").split(",")
+                            if p.strip()
+                        ]
+                        leave_notes = row[3].strip()
                     cfg.planned_leaves.append(
-                        LeaveEntry(name=name, days=float(days_str), notes=notes)
+                        normalize_leave_entry(
+                            name=name,
+                            days=float(days_str),
+                            notes=leave_notes,
+                            dates=leave_dates,
+                        )
                     )
                 except ValueError:
                     pass

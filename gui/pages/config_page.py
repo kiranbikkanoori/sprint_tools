@@ -30,13 +30,13 @@ from PySide6.QtWidgets import (
 from config_parser import (
     ExclusionEntry,
     ExtraTicket,
-    LeaveEntry,
     SprintConfig,
     TeamMember,
 )
 from gui import config_io, jira_service
 from gui.settings import AppSettings, configs_dir
 from gui.widgets.editable_table import Column, EditableTable
+from gui.widgets.leave_grid import LeaveGrid
 from utils import parse_iso_date
 
 
@@ -50,6 +50,8 @@ class ConfigPage(QWidget):
         self.settings = settings
         self.config: SprintConfig = SprintConfig()
         self.payload: dict = {}
+        self._sprint_start: date | None = None
+        self._sprint_end: date | None = None
 
         title = QLabel("<h2>Sprint configuration</h2>")
         self.subtitle = QLabel("Load a sprint first to populate this form.")
@@ -96,17 +98,15 @@ class ConfigPage(QWidget):
             "People assigned to issues in the sprint. Uncheck anyone who shouldn't be in the report (e.g. managers)."),
             "Team members")
 
-        self.leaves_table = EditableTable(
-            [
-                Column("name", "Name", kind="combo"),
-                Column("days", "Leave days", kind="number", width=120, decimals=1, maximum=30),
-                Column("notes", "Notes"),
-            ],
-            combo_options_provider=self._included_names,
+        self.leaves_grid = LeaveGrid()
+        self.tabs.addTab(
+            self._wrap(
+                self.leaves_grid,
+                "Check weekday cells for planned leave. Capacity uses the count of "
+                "checked days; the report grays those day cells (hours still shown).",
+            ),
+            "Leaves",
         )
-        self.tabs.addTab(self._wrap(self.leaves_table,
-            "Planned leave per person, in days. Reduces capacity."),
-            "Leaves")
 
         self.excl_table = EditableTable(
             [
@@ -198,17 +198,28 @@ class ConfigPage(QWidget):
         return jira_service.ticket_keys_in_payload(self.payload)
 
     def _refresh_combos(self, *_):
-        self.leaves_table.refresh_combos()
         self.excl_table.refresh_combos()
         self.exticket_table.refresh_combos()
+        self._sync_leave_people()
+
+    def _sync_leave_people(self) -> None:
+        """Keep leave-grid rows aligned with included team members."""
+        self.leaves_grid.set_people(self._included_names())
 
     # ── public entry: called after a sprint is loaded ───────────────────
 
     def populate_from_payload(self, payload: dict, sprint: dict) -> None:
         log.info("ConfigPage.populate_from_payload: sprint=%s", sprint.get("name"))
         self.payload = payload
-        sd = parse_iso_date(sprint.get("startDate"))
-        ed = parse_iso_date(sprint.get("endDate"))
+        sd = parse_iso_date(sprint.get("startDate")) or parse_iso_date(
+            (payload.get("sprint") or {}).get("start_date")
+        )
+        ed = parse_iso_date(sprint.get("endDate")) or parse_iso_date(
+            (payload.get("sprint") or {}).get("end_date")
+        )
+        self._sprint_start = sd
+        self._sprint_end = ed
+        self.leaves_grid.set_sprint_range(sd, ed)
         self.subtitle.setText(
             f"Sprint loaded: <b>{sprint.get('name', '')}</b> "
             f"({sd.isoformat() if sd else 'N/A'} → {ed.isoformat() if ed else 'N/A'}) — "
@@ -281,9 +292,14 @@ class ConfigPage(QWidget):
         self.team_table.set_rows([
             {"name": m.name, "role": m.role, "included": m.included} for m in cfg.team_members
         ])
-        self.leaves_table.set_rows([
-            {"name": l.name, "days": l.days, "notes": l.notes} for l in cfg.planned_leaves
-        ])
+        self.leaves_grid.set_sprint_range(self._sprint_start, self._sprint_end)
+        included = [m.name for m in cfg.team_members if m.included and m.name.strip()]
+        # Also keep leave-only names from saved config so checks aren't dropped.
+        for leaf in cfg.planned_leaves:
+            if leaf.name and leaf.name not in included:
+                included.append(leaf.name)
+        self.leaves_grid.set_people(included, preserve_leaves=[])
+        self.leaves_grid.set_leaves(list(cfg.planned_leaves))
         self.excl_table.set_rows([
             {"name": e.name, "hours": e.hours, "reason": e.reason} for e in cfg.other_exclusions
         ])
@@ -315,15 +331,7 @@ class ConfigPage(QWidget):
             for r in self.team_table.rows()
             if str(r.get("name", "")).strip()
         ]
-        cfg.planned_leaves = [
-            LeaveEntry(
-                name=str(r.get("name", "")).strip(),
-                days=_to_float(r.get("days")),
-                notes=str(r.get("notes", "")).strip(),
-            )
-            for r in self.leaves_table.rows()
-            if str(r.get("name", "")).strip()
-        ]
+        cfg.planned_leaves = self.leaves_grid.leave_entries()
         cfg.other_exclusions = [
             ExclusionEntry(
                 name=str(r.get("name", "")).strip(),

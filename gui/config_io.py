@@ -23,6 +23,8 @@ from config_parser import (
     LeaveEntry,
     SprintConfig,
     TeamMember,
+    effective_leave_days,
+    normalize_leave_entry,
     parse_config,
 )
 
@@ -35,7 +37,15 @@ def config_to_dict(cfg: SprintConfig) -> dict:
         "sprint_duration_weeks": cfg.sprint_duration_weeks,
         "team_members": [asdict(m) for m in cfg.team_members],
         "meeting_days_reserved": cfg.meeting_days_reserved,
-        "planned_leaves": [asdict(l) for l in cfg.planned_leaves],
+        "planned_leaves": [
+            {
+                "name": l.name,
+                "days": effective_leave_days(l),
+                "notes": l.notes,
+                "dates": list(l.dates or []),
+            }
+            for l in cfg.planned_leaves
+        ],
         "other_exclusions": [asdict(e) for e in cfg.other_exclusions],
         "extra_tickets": [asdict(t) for t in cfg.extra_tickets],
         "excluded_tickets": list(cfg.excluded_tickets),
@@ -62,10 +72,11 @@ def dict_to_config(data: dict) -> SprintConfig:
         if m.get("name", "").strip()
     ]
     cfg.planned_leaves = [
-        LeaveEntry(
+        normalize_leave_entry(
             name=l.get("name", "").strip(),
             days=float(l.get("days", 0) or 0),
             notes=l.get("notes", "") or "",
+            dates=list(l.get("dates") or []),
         )
         for l in (data.get("planned_leaves") or [])
         if l.get("name", "").strip()
@@ -248,13 +259,16 @@ def config_to_markdown(cfg: SprintConfig) -> str:
         "",
         "### Planned Leaves",
         "",
-        "| Name | Leave Days | Notes |",
-        "| ---- | ---------- | ----- |",
+        "| Name | Leave Days | Leave Dates | Notes |",
+        "| ---- | ---------- | ----------- | ----- |",
     ]
     for l in cfg.planned_leaves:
-        out.append(f"| {l.name} | {l.days:g} | {l.notes} |")
+        dates = ", ".join(l.dates or [])
+        out.append(
+            f"| {l.name} | {effective_leave_days(l):g} | {dates} | {l.notes} |"
+        )
     if not cfg.planned_leaves:
-        out.append("|      |            |       |")
+        out.append("|      |            |             |       |")
     out += ["", "### Other Non-Development Activities (per person)", "",
             "| Name | Hours Excluded | Reason |", "| ---- | -------------- | ------ |"]
     for e in cfg.other_exclusions:

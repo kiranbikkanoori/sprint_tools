@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 
-from config_parser import SprintConfig
+from config_parser import SprintConfig, effective_leave_days, leave_dates_by_person
 from utils import (
     effective_issue_type,
     format_jira_datetime_ist,
@@ -320,7 +320,7 @@ def build_capacity_hours_by_person(
     meeting_days = float(config.meeting_days_reserved or 0.0)
     leaves_by_name: dict[str, float] = defaultdict(float)
     for entry in config.planned_leaves:
-        leaves_by_name[entry.name] += float(entry.days)
+        leaves_by_name[entry.name] += effective_leave_days(entry)
     excl_by_name: dict[str, float] = defaultdict(float)
     for entry in config.other_exclusions:
         excl_by_name[entry.name] += float(entry.hours)
@@ -347,7 +347,7 @@ def build_effective_days_by_person(
 
     leaves_by_name: dict[str, float] = defaultdict(float)
     for entry in config.planned_leaves:
-        leaves_by_name[entry.name] += float(entry.days)
+        leaves_by_name[entry.name] += effective_leave_days(entry)
 
     out: dict[str, float] = {}
     for name in work_report.included_names:
@@ -652,14 +652,19 @@ def _format_day_cell(
     ticket_hours: dict[str, float],
     *,
     max_tickets: int = 14,
+    on_leave: bool = False,
 ) -> str:
     """
     One table cell: bold total plus HTML line breaks and a bullet per ticket
     (issue key + hours only). Uses ``<br>`` for multi-line cells.
+
+    ``on_leave`` prefixes ``(L)`` so markdown readers can see planned leave;
+    hours are still included when present.
     """
+    prefix = "(L) " if on_leave else ""
     if total_h < 1e-6 and not ticket_hours:
-        return "0.0"
-    lines: list[str] = [f"**{total_h:.1f}**"]
+        return f"{prefix}0.0"
+    lines: list[str] = [f"{prefix}**{total_h:.1f}**"]
     items = sorted(ticket_hours.items(), key=lambda x: (-x[1], x[0]))
     positive = [(k, h) for k, h in items if h >= 1e-6]
     for idx, (key, hrs) in enumerate(positive):
@@ -734,13 +739,15 @@ def generate_text_report(
             "**Stories** and **non-story tasks** are in **two tables** below. "
             "**Logged** hours come from worklogs; **Remaining (h)** is the sum of each person's "
             "assigned Story/Task **remaining estimates** in Jira (not original estimate). "
-            "Each day cell lists **issue keys** and hours under the daily total."
+            "Each day cell lists **issue keys** and hours under the daily total. "
+            "Cells marked **(L)** are planned leave days (hours still counted if logged)."
         )
         ln()
 
     rem_story = _remaining_hours_by_assignee(config, issues or [], bucket="story")
     rem_task = _remaining_hours_by_assignee(config, issues or [], bucket="task")
     capacity = build_capacity_hours_by_person(config, work_report.included_names)
+    leave_by_person = leave_dates_by_person(config.planned_leaves)
 
     def _emit_planning_hours_table(title: str, remaining_by_name: dict[str, float]) -> None:
         ln("---")
@@ -789,13 +796,15 @@ def generate_text_report(
             row = f"| {name} |"
             person_tot = 0.0
             pdata = work_report.daily_story_task.get(name, {})
+            person_leave = leave_by_person.get(name, set())
             for j, d in enumerate(display_dates):
                 cell = pdata.get(d, {"story": 0.0, "task": 0.0})
                 h = cell[bucket]
                 col_totals[j] += h
                 person_tot += h
                 tickets_for_cell = tdetails.get(name, {}).get(d, {}).get(bucket, {})
-                cell_html = _format_day_cell(h, tickets_for_cell)
+                on_leave = d.isoformat() in person_leave
+                cell_html = _format_day_cell(h, tickets_for_cell, on_leave=on_leave)
                 row += f" {cell_html} |"
             rem_h = float(remaining_by_name.get(name, 0.0))
             team_logged += person_tot
@@ -807,7 +816,11 @@ def generate_text_report(
             total_row += f" **{col_totals[j]:.1f}** |"
         total_row += f" **{team_logged:.1f}** | **{team_remaining:.1f}** |"
         ln(total_row)
-        ln()
+        if leave_by_person:
+            ln("*(L) = planned leave day; logged hours on that day are still counted.*")
+            ln()
+        else:
+            ln()
 
     if planning_mode:
         _emit_planning_hours_table("## Stories — remaining & capacity", rem_story)

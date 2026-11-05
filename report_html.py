@@ -6,7 +6,7 @@ from datetime import date
 from html import escape
 from pathlib import Path
 
-from config_parser import SprintConfig
+from config_parser import SprintConfig, leave_dates_by_person
 from report_generator import (
     REASON_NOT_STARTED,
     SprintWorkReport,
@@ -90,10 +90,12 @@ def _hours_table_html(
     bucket: str,
     logged_label: str,
     remaining_by_name: dict[str, float],
+    leave_by_person: dict[str, set[str]] | None = None,
 ) -> str:
     if not display_dates:
         return '<p class="empty">No working days in range.</p>'
 
+    leave_by_person = leave_by_person or {}
     parts: list[str] = ['<table><thead><tr><th>Person</th>']
     for d in display_dates:
         parts.append(f'<th class="num">{escape(d.strftime("%b %d"))} (h)</th>')
@@ -110,13 +112,19 @@ def _hours_table_html(
         parts.append(f"<tr><td>{escape(name)}</td>")
         person_tot = 0.0
         pdata = work_report.daily_story_task.get(name, {})
+        person_leave = leave_by_person.get(name, set())
         for j, d in enumerate(display_dates):
             cell = pdata.get(d, {"story": 0.0, "task": 0.0})
             h = cell[bucket]
             col_totals[j] += h
             person_tot += h
             tickets_for_cell = tdetails.get(name, {}).get(d, {}).get(bucket, {})
-            parts.append(f'<td class="num">{_day_cell_html(h, tickets_for_cell)}</td>')
+            on_leave = d.isoformat() in person_leave
+            cls = "num leave-day" if on_leave else "num"
+            title = ' title="Planned leave"' if on_leave else ""
+            parts.append(
+                f'<td class="{cls}"{title}>{_day_cell_html(h, tickets_for_cell)}</td>'
+            )
         rem_h = float(remaining_by_name.get(name, 0.0))
         team_logged += person_tot
         team_remaining += rem_h
@@ -132,6 +140,11 @@ def _hours_table_html(
         f'<td class="num">{team_logged:.1f}</td>'
         f'<td class="num">{team_remaining:.1f}</td></tr></tbody></table>'
     )
+    if leave_by_person:
+        parts.append(
+            '<p class="muted">Highlighted cells = planned leave '
+            "(logged hours on that day are still counted).</p>"
+        )
     return "".join(parts)
 
 
@@ -258,19 +271,22 @@ def generate_html_report(
         body.append(_planning_hours_table_html(work_report, rem_task, capacity))
         body.append("</section>")
     else:
+        leave_by_person = leave_dates_by_person(config.planned_leaves)
         body.append(
             '<p class="note">Worklog source: by <strong>worklog author</strong>, for team members '
             "with Include = Yes. Weekday columns cover "
             f"<strong>[{sprint_start.isoformat()}, {report_cap.isoformat()}]</strong>. "
             "<strong>Logged</strong> comes from worklogs; <strong>Remaining (h)</strong> sums each "
             "assignee’s Story/Task <strong>remaining estimates</strong> in Jira (not original estimate). "
-            "Sub-task logs appear only under validation.</p>"
+            "Sub-task logs appear only under validation. "
+            "Highlighted day cells mark planned leave (hours still counted if logged).</p>"
         )
         body.append("<section>")
         body.append("<h2>Stories — logged hours &amp; remaining</h2>")
         body.append(
             _hours_table_html(
                 work_report, display_dates, "story", "Logged (h)", rem_story,
+                leave_by_person=leave_by_person,
             )
         )
         body.append("</section>")
@@ -279,6 +295,7 @@ def generate_html_report(
         body.append(
             _hours_table_html(
                 work_report, display_dates, "task", "Logged (h)", rem_task,
+                leave_by_person=leave_by_person,
             )
         )
         body.append("</section>")

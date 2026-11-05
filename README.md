@@ -45,7 +45,7 @@ The Generate preview shows the HTML styling. Open the `.html` file in a browser 
 
 **Report date** — the report only includes worklogs **up to and including** this date. Use today for a mid-sprint snapshot, or the sprint end date for a final report. A wrong date truncates hours and KPIs.
 
-**Planned leaves** — the person name must match a **Team members** row exactly (same spelling/spacing). Prefer the dropdown. If the name does not match, that leave is ignored and capacity stays wrong.
+**Planned leaves** — on the Leaves tab, check weekday cells for each included person. Capacity uses the number of checked days; the HTML report highlights those day cells (worklogs that day are still counted).
 
 **Include checkbox** — only included people appear in hours tables, completion, and the chart. Worklogs are matched by **Jira worklog author** name.
 
