@@ -70,10 +70,24 @@ def _planning_hours_table_html(
     return "".join(parts)
 
 
-def _day_cell_html(total_h: float, ticket_hours: dict[str, float], *, max_tickets: int = 14) -> str:
+def _day_cell_html(
+    total_h: float,
+    ticket_hours: dict[str, float],
+    *,
+    max_tickets: int = 14,
+    on_leave: bool = False,
+) -> str:
+    parts: list[str] = []
+    if on_leave:
+        parts.append("<strong>LEAVE</strong>")
     if total_h < 1e-6 and not ticket_hours:
-        return "0.0"
-    parts = [f"<strong>{total_h:.1f}</strong>"]
+        if parts:
+            parts.append("<br>")
+        parts.append("0.0")
+        return "".join(parts)
+    if parts:
+        parts.append("<br>")
+    parts.append(f"<strong>{total_h:.1f}</strong>")
     items = sorted(ticket_hours.items(), key=lambda x: (-x[1], x[0]))
     positive = [(k, h) for k, h in items if h >= 1e-6]
     for idx, (key, hrs) in enumerate(positive):
@@ -120,10 +134,10 @@ def _hours_table_html(
             person_tot += h
             tickets_for_cell = tdetails.get(name, {}).get(d, {}).get(bucket, {})
             on_leave = d.isoformat() in person_leave
-            cls = "num leave-day" if on_leave else "num"
-            title = ' title="Planned leave"' if on_leave else ""
             parts.append(
-                f'<td class="{cls}"{title}>{_day_cell_html(h, tickets_for_cell)}</td>'
+                f'<td class="num">'
+                f"{_day_cell_html(h, tickets_for_cell, on_leave=on_leave)}"
+                f"</td>"
             )
         rem_h = float(remaining_by_name.get(name, 0.0))
         team_logged += person_tot
@@ -142,8 +156,8 @@ def _hours_table_html(
     )
     if leave_by_person:
         parts.append(
-            '<p class="muted">Highlighted cells = planned leave '
-            "(logged hours on that day are still counted).</p>"
+            '<p class="muted"><strong>LEAVE</strong> on the first line of a day cell '
+            "= planned leave (logged hours on that day are still counted).</p>"
         )
     return "".join(parts)
 
@@ -279,7 +293,8 @@ def generate_html_report(
             "<strong>Logged</strong> comes from worklogs; <strong>Remaining (h)</strong> sums each "
             "assignee’s Story/Task <strong>remaining estimates</strong> in Jira (not original estimate). "
             "Sub-task logs appear only under validation. "
-            "Highlighted day cells mark planned leave (hours still counted if logged).</p>"
+            "Day cells that start with <strong>LEAVE</strong> are planned leave "
+            "(hours still counted if logged).</p>"
         )
         body.append("<section>")
         body.append("<h2>Stories — logged hours &amp; remaining</h2>")

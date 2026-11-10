@@ -24,9 +24,6 @@ LIGHT = {
     "warn_bg": "#FFF7ED",
     "warn_text": "#B45309",
     "warn_strong": "#DC2626",
-    # Warm amber so leave days read clearly on white/zebra rows (slate was too faint).
-    "leave_bg": "#FDE68A",
-    "leave_text": "#78350F",
     "code_bg": "#F1F5F9",
     "blockquote_bg": "#F7FAFF",
 }
@@ -47,8 +44,6 @@ DARK = {
     "warn_bg": "#3B2F1A",
     "warn_text": "#FBBF24",
     "warn_strong": "#FCA5A5",
-    "leave_bg": "#334155",
-    "leave_text": "#CBD5E1",
     "code_bg": "#0F172A",
     "blockquote_bg": "#172033",
 }
@@ -153,10 +148,6 @@ def _rules(c: dict[str, str]) -> str:
   }}
   tr.warn td {{ background: {c['warn_bg']}; }}
   tr.warn td.rem {{ color: {c['warn_strong']}; font-weight: 700; }}
-  td.leave-day {{
-    background: {c['leave_bg']} !important;
-    color: {c['leave_text']};
-  }}
   code {{
     background: {c['code_bg']};
     padding: 1px 4px;
@@ -204,8 +195,6 @@ def report_css_browser() -> str:
   --warn-bg: {light['warn_bg']};
   --warn-text: {light['warn_text']};
   --warn-strong: {light['warn_strong']};
-  --leave-bg: {light['leave_bg']};
-  --leave-text: {light['leave_text']};
   --code-bg: {light['code_bg']};
   --blockquote-bg: {light['blockquote_bg']};
 }}
@@ -225,8 +214,6 @@ def report_css_browser() -> str:
     --warn-bg: {dark['warn_bg']};
     --warn-text: {dark['warn_text']};
     --warn-strong: {dark['warn_strong']};
-    --leave-bg: {dark['leave_bg']};
-    --leave-text: {dark['leave_text']};
     --code-bg: {dark['code_bg']};
     --blockquote-bg: {dark['blockquote_bg']};
   }}
@@ -246,8 +233,6 @@ html[data-theme="dark"] {{
   --warn-bg: {dark['warn_bg']};
   --warn-text: {dark['warn_text']};
   --warn-strong: {dark['warn_strong']};
-  --leave-bg: {dark['leave_bg']};
-  --leave-text: {dark['leave_text']};
   --code-bg: {dark['code_bg']};
   --blockquote-bg: {dark['blockquote_bg']};
 }}
@@ -266,8 +251,6 @@ html[data-theme="light"] {{
   --warn-bg: {light['warn_bg']};
   --warn-text: {light['warn_text']};
   --warn-strong: {light['warn_strong']};
-  --leave-bg: {light['leave_bg']};
-  --leave-text: {light['leave_text']};
   --code-bg: {light['code_bg']};
   --blockquote-bg: {light['blockquote_bg']};
 }}
@@ -365,10 +348,6 @@ tr.total td {{
 }}
 tr.warn td {{ background: var(--warn-bg); }}
 tr.warn td.rem {{ color: var(--warn-strong); font-weight: 700; }}
-td.leave-day {{
-  background: var(--leave-bg) !important;
-  color: var(--leave-text);
-}}
 code {{
   background: var(--code-bg);
   padding: 1px 4px;

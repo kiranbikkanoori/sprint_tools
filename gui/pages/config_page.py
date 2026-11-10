@@ -103,7 +103,8 @@ class ConfigPage(QWidget):
             self._wrap(
                 self.leaves_grid,
                 "Check weekday cells for planned leave. Capacity uses the count of "
-                "checked days; the report grays those day cells (hours still shown).",
+                "checked days; the report labels those day cells with LEAVE "
+                "(hours still shown if logged).",
             ),
             "Leaves",
         )

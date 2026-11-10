@@ -658,13 +658,15 @@ def _format_day_cell(
     One table cell: bold total plus HTML line breaks and a bullet per ticket
     (issue key + hours only). Uses ``<br>`` for multi-line cells.
 
-    ``on_leave`` prefixes ``(L)`` so markdown readers can see planned leave;
-    hours are still included when present.
+    ``on_leave`` puts ``LEAVE`` on the first line; hours below are still counted.
     """
-    prefix = "(L) " if on_leave else ""
+    lines: list[str] = []
+    if on_leave:
+        lines.append("**LEAVE**")
     if total_h < 1e-6 and not ticket_hours:
-        return f"{prefix}0.0"
-    lines: list[str] = [f"{prefix}**{total_h:.1f}**"]
+        lines.append("0.0")
+        return "<br>".join(lines)
+    lines.append(f"**{total_h:.1f}**")
     items = sorted(ticket_hours.items(), key=lambda x: (-x[1], x[0]))
     positive = [(k, h) for k, h in items if h >= 1e-6]
     for idx, (key, hrs) in enumerate(positive):
@@ -740,7 +742,8 @@ def generate_text_report(
             "**Logged** hours come from worklogs; **Remaining (h)** is the sum of each person's "
             "assigned Story/Task **remaining estimates** in Jira (not original estimate). "
             "Each day cell lists **issue keys** and hours under the daily total. "
-            "Cells marked **(L)** are planned leave days (hours still counted if logged)."
+            "Day cells that start with **LEAVE** are planned leave "
+            "(hours still counted if logged)."
         )
         ln()
 
@@ -817,7 +820,8 @@ def generate_text_report(
         total_row += f" **{team_logged:.1f}** | **{team_remaining:.1f}** |"
         ln(total_row)
         if leave_by_person:
-            ln("*(L) = planned leave day; logged hours on that day are still counted.*")
+            ln("*LEAVE on the first line of a day cell = planned leave; "
+               "logged hours on that day are still counted.*")
             ln()
         else:
             ln()
